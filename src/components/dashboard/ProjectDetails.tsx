@@ -754,10 +754,11 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                           })
                           .map((customKey, index) => {
                             const count = editData.equipmentBreakdown[customKey] || 0;
-                            const displayName = customKey
+                            let displayName = customKey
                               .replace(/([A-Z])/g, ' $1')
                               .replace(/^./, str => str.toUpperCase())
                               .trim();
+                            if (customKey === 'distillationcolumn' || displayName === 'Distillationcolumn') displayName = 'Column';
                             
                             // Cycle through different colors for custom equipment types
                             const colorClasses = [
@@ -817,10 +818,11 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                           })
                           .map((customKey, index) => {
                             const count = project.equipmentBreakdown[customKey] || 0;
-                            const displayName = customKey
+                            let displayName = customKey
                               .replace(/([A-Z])/g, ' $1')
                               .replace(/^./, str => str.toUpperCase())
                               .trim();
+                            if (customKey === 'distillationcolumn' || displayName === 'Distillationcolumn') displayName = 'Column';
                             
                             // Cycle through different colors for custom equipment types
                             const colorClasses = [

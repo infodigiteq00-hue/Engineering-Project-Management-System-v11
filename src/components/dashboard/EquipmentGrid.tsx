@@ -2053,7 +2053,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
   };
 
   const handleMarkComplete = async (equipment: Equipment) => {
-    if (window.confirm(`Mark ${equipment.type} ${equipment.tagNumber} as completed and dispatched?`)) {
+    if (window.confirm(`Mark ${equipment.type === 'Distillation Column' ? 'Column' : equipment.type} ${equipment.tagNumber} as completed and dispatched?`)) {
       setLoadingStates(prev => ({ ...prev, [`complete-${equipment.id}`]: true }));
 
       try {
@@ -2097,7 +2097,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
 
         toast({
           title: "Equipment Completed",
-          description: `${equipment.type} ${equipment.tagNumber} marked as completed and dispatched!`,
+          description: `${equipment.type === 'Distillation Column' ? 'Column' : equipment.type} ${equipment.tagNumber} marked as completed and dispatched!`,
           variant: "default"
         });
       } catch (error) {
@@ -2190,7 +2190,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
   };
 
   const handleDeleteEquipment = async (equipment: Equipment) => {
-    if (window.confirm(`Are you sure you want to delete ${equipment.type} ${equipment.tagNumber}? This action cannot be undone.`)) {
+    if (window.confirm(`Are you sure you want to delete ${equipment.type === 'Distillation Column' ? 'Column' : equipment.type} ${equipment.tagNumber}? This action cannot be undone.`)) {
       setLoadingStates(prev => ({ ...prev, [`delete-${equipment.id}`]: true }));
 
       try {
@@ -2238,7 +2238,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
 
         toast({
           title: "Equipment Deleted",
-          description: `${equipment.type} ${equipment.tagNumber} deleted successfully!`,
+          description: `${equipment.type === 'Distillation Column' ? 'Column' : equipment.type} ${equipment.tagNumber} deleted successfully!`,
           variant: "default"
         });
       } catch (error) {
@@ -7333,7 +7333,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                     <SelectItem value="Pressure Vessel">Pressure Vessel</SelectItem>
                     <SelectItem value="Reactor">Reactor</SelectItem>
                     <SelectItem value="Storage Tank">Storage Tank</SelectItem>
-                    <SelectItem value="Distillation Column">Distillation Column</SelectItem>
+                    <SelectItem value="Distillation Column">Column</SelectItem>
                     <SelectItem value="Custom">Custom</SelectItem>
                   </SelectContent>
                 </Select>
@@ -8099,12 +8099,12 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                   <div className="flex items-start justify-between mb-3 sm:mb-4">
                     <div className="flex-1 min-w-0 pr-2">
                       <h3 className="font-semibold text-foreground truncate text-sm sm:text-base">
-                        {item.manufacturingSerial || item.name || item.type}
+                        {item.manufacturingSerial || item.name || (item.type === 'Distillation Column' ? 'Column' : item.type)}
                       </h3>
                       <p className="text-xs sm:text-sm text-muted-foreground">Tag: {item.tagNumber || '—'}</p>
                       <div className="flex flex-col gap-1 mt-1 text-xs text-gray-500">
                         <span className="truncate">Job: {item.jobNumber || '—'}</span>
-                        <span className="truncate">Type: {item.type || '—'}</span>
+                        <span className="truncate">Type: {item.type === 'Distillation Column' ? 'Column' : (item.type || '—')}</span>
                       </div>
                     </div>
 

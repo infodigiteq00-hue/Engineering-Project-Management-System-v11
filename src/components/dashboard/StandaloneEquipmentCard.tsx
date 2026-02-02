@@ -749,12 +749,12 @@ const StandaloneEquipmentCard: React.FC<StandaloneEquipmentCardProps> = (props) 
                   <div className="flex items-start justify-between mb-3 sm:mb-4">
                     <div className="flex-1 min-w-0 pr-2">
                       <h3 className="font-semibold text-foreground truncate text-sm sm:text-base">
-                        {item.manufacturingSerial || item.name || item.type}
+                        {item.manufacturingSerial || item.name || (item.type === 'Distillation Column' ? 'Column' : item.type)}
                       </h3>
                       <p className="text-xs sm:text-sm text-muted-foreground">Tag: {item.tagNumber || 'â€"'}</p>
                       <div className="flex flex-col gap-1 mt-1 text-xs text-gray-500">
                         <span className="truncate">Job: {item.jobNumber || 'â€"'}</span>
-                        <span className="truncate">Type: {item.type || 'â€"'}</span>
+                        <span className="truncate">Type: {item.type === 'Distillation Column' ? 'Column' : (item.type || '—')}</span>
                       </div>
                     </div>
 

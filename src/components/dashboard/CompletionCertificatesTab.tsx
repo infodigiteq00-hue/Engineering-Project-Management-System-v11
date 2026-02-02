@@ -663,7 +663,8 @@ const CompletionCertificatesTab = ({
                           const standardKeys = ['pressureVessel', 'heatExchanger', 'reactor', 'storageTank'];
                           Object.entries(equipmentBreakdown).forEach(([key, count]) => {
                             if (!standardKeys.includes(key) && count && count > 0) {
-                              const readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                              let readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                              if (key === 'distillationcolumn' || readableName === 'Distillationcolumn') readableName = 'Column';
                               const colors = ['indigo', 'pink', 'red', 'yellow', 'teal', 'cyan'];
                               const colorIndex = equipmentTypes.length % colors.length;
                               equipmentTypes.push({ 
@@ -809,7 +810,8 @@ const CompletionCertificatesTab = ({
                           const standardKeys = ['pressureVessel', 'heatExchanger', 'reactor', 'storageTank'];
                           Object.entries(equipmentBreakdown).forEach(([key, count]) => {
                             if (!standardKeys.includes(key) && count && count > 0) {
-                              const readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                              let readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                              if (key === 'distillationcolumn' || readableName === 'Distillationcolumn') readableName = 'Column';
                               const colors = ['indigo', 'pink', 'red', 'yellow', 'teal', 'cyan'];
                               const colorIndex = equipmentTypes.length % colors.length;
                               equipmentTypes.push({ 

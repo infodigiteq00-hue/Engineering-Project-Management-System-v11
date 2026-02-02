@@ -557,6 +557,422 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
     setFormData(prev => ({ ...prev, [field]: files }));
   };
 
+  const handleSmartDocumentUpload = async (file: File | null) => {
+    if (!file) return;
+
+    try {
+      toast({
+        title: "Processing Document",
+        description: "Please wait while we extract data!",
+        variant: "default"
+      });
+
+      let extractedText = '';
+
+      if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        extractedText = await extractTextFromExcel(file);
+      } else if (file.name.toLowerCase().endsWith('.docx') || file.name.toLowerCase().endsWith('.doc')) {
+        extractedText = await extractTextFromWord(file);
+      } else if (file.name.toLowerCase().endsWith('.pdf')) {
+        extractedText = await extractTextFromPDF(file);
+      } else if (file.name.toLowerCase().endsWith('.txt')) {
+        extractedText = await file.text();
+      } else if (file.type === 'text/plain') {
+        extractedText = await file.text();
+      } else if (file.type === 'application/pdf') {
+        extractedText = await extractTextFromPDF(file);
+      } else if (file.type.includes('word') || file.type.includes('document')) {
+        extractedText = await extractTextFromWord(file);
+      } else if (file.type.includes('sheet') || file.type.includes('excel')) {
+        extractedText = await extractTextFromExcel(file);
+      } else {
+        toast({
+          title: "Unsupported File Type",
+          description: "Please upload PDF, Word, Excel, or text files.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const parsedData = parseDocumentText(extractedText);
+
+      setFormData(prev => ({
+        ...prev,
+        ...parsedData
+      }));
+
+      if (parsedData.equipmentType) {
+        const type = parsedData.equipmentType;
+        setEquipmentDetails(prev => ({
+          ...prev,
+          [type]: [{
+            id: `${type}-1`,
+            tagNumber: parsedData.tagNumber || '',
+            jobNumber: parsedData.jobNumber || '',
+            manufacturingSerial: parsedData.manufacturingSerial || '',
+            size: parsedData.size || '',
+            material: parsedData.material || '',
+            designCode: parsedData.designCode || '',
+            documents: []
+          }]
+        }));
+      }
+
+      const filledFields = Object.keys(parsedData).filter(key => parsedData[key as keyof typeof parsedData]);
+
+      if (filledFields.length > 0) {
+        toast({
+          title: "Document Processed",
+          description: `Form fields have been auto-filled: ${filledFields.join(', ')}. Please review and complete remaining fields.`,
+          variant: "default"
+        });
+      } else {
+        toast({
+          title: "Document Processed",
+          description: "No fields could be auto-filled. Please fill the form manually.",
+          variant: "default"
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error processing document:', error);
+      toast({
+        title: "Error",
+        description: "Error processing document. Please try again or fill the form manually.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const extractTextFromPDF = async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = async () => {
+        try {
+          const pdfjsLib = (window as any).pdfjsLib;
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+          let fullText = '';
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items.map((item: any) => item.str).join(' ');
+            fullText += pageText + '\n';
+          }
+          resolve(fullText);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      script.onerror = () => reject(new Error('Failed to load PDF.js'));
+      document.head.appendChild(script);
+    });
+  };
+
+  const extractTextFromWord = async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+      script.onload = async () => {
+        try {
+          const mammoth = (window as any).mammoth;
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          resolve(result.value);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      script.onerror = () => reject(new Error('Failed to load mammoth.js'));
+      document.head.appendChild(script);
+    });
+  };
+
+  const extractTextFromExcel = async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if ((window as any).XLSX) {
+        processExcelFile(file).then(resolve).catch(reject);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.onload = async () => {
+        try {
+          const result = await processExcelFile(file);
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      script.onerror = () => reject(new Error('Failed to load xlsx library'));
+      document.head.appendChild(script);
+
+      async function processExcelFile(f: File): Promise<string> {
+        try {
+          const XLSX = (window as any).XLSX;
+          const arrayBuffer = await f.arrayBuffer();
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+          let fullText = '';
+          workbook.SheetNames.forEach((sheetName: string) => {
+            const worksheet = workbook.Sheets[sheetName];
+            try {
+              const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+              if (jsonData.length >= 2) {
+                const headers = jsonData[0];
+                const dataRow = jsonData[1];
+                (headers as any[]).forEach((header: any, index: number) => {
+                  if (header && dataRow && (dataRow as any[])[index]) {
+                    const fieldName = header.toString().trim();
+                    const fieldValue = (dataRow as any[])[index].toString().trim();
+                    if (fieldName && fieldValue) {
+                      fullText += `${fieldName}: ${fieldValue}\n`;
+                    }
+                  }
+                });
+              } else {
+                (jsonData as any[]).forEach((row: any) => {
+                  if (Array.isArray(row)) {
+                    const rowText = row.filter((cell: any) => cell && cell.toString().trim()).join(' ');
+                    if (rowText.trim()) fullText += rowText + '\n';
+                  }
+                });
+              }
+            } catch {
+              try {
+                fullText += XLSX.utils.sheet_to_csv(worksheet) + '\n';
+              } catch {
+                const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+                for (let row = range.s.r; row <= range.e.r; row++) {
+                  for (let col = range.s.c; col <= range.e.c; col++) {
+                    const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: col })];
+                    if (cell && cell.v) fullText += cell.v.toString() + ' ';
+                  }
+                  fullText += '\n';
+                }
+              }
+            }
+          });
+          return fullText.trim() || '';
+        } catch (error) {
+          console.error('Excel processing error:', error);
+          return '';
+        }
+      }
+    });
+  };
+
+  const parseDocumentText = (text: string): Partial<StandaloneEquipmentFormData> & { equipmentType?: string; tagNumber?: string; jobNumber?: string; manufacturingSerial?: string; size?: string; material?: string; designCode?: string } => {
+    const parsedData: Partial<StandaloneEquipmentFormData> & Record<string, string | undefined> = {};
+    const lowerText = text.toLowerCase();
+
+    const clientPatterns = [
+      /(?:client name[:\s]*)([^\n\r]+)/i,
+      /(?:client[:\s]*|customer[:\s]*|company[:\s]*|organization[:\s]*)([^\n\r]+)/i,
+      /(?:for[:\s]*)([^\n\r]*ltd[^\n\r]*)/i,
+      /(?:for[:\s]*)([^\n\r]*industries[^\n\r]*)/i
+    ];
+    for (const pattern of clientPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        parsedData.clientName = match[1].trim();
+        break;
+      }
+    }
+
+    const locationPatterns = [
+      /(?:plant location[:\s]*)([^\n\r]+)/i,
+      /(?:location[:\s]*|plant[:\s]*|site[:\s]*|address[:\s]*)([^\n\r]+)/i
+    ];
+    for (const pattern of locationPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        parsedData.plantLocation = match[1].trim();
+        break;
+      }
+    }
+
+    const poPatterns = [
+      /(?:po number[:\s]*)([^\n\r]+)/i,
+      /(?:po[:\s]*|purchase order[:\s]*|order[:\s]*)([^\n\r]+)/i,
+      /(po-\d{4}-\d{3,4})/i
+    ];
+    for (const pattern of poPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        parsedData.poNumber = match[1].trim();
+        break;
+      }
+    }
+
+    const emPatterns = [
+      /(?:equipment manager[:\s]*)([^\n\r]+)/i,
+      /(?:project manager[:\s]*|manager[:\s]*|pm[:\s]*)([^\n\r]+)/i
+    ];
+    for (const pattern of emPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        parsedData.equipmentManager = match[1].trim();
+        break;
+      }
+    }
+
+    const consultantPatterns = [/(?:consultant[:\s]*)([^\n\r]+)/i];
+    for (const pattern of consultantPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        parsedData.consultant = match[1].trim();
+        break;
+      }
+    }
+
+    const tpiPatterns = [/(?:tpi agency[:\s]*|tpi[:\s]*|inspection[:\s]*)([^\n\r]+)/i];
+    for (const pattern of tpiPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        parsedData.tpiAgency = match[1].trim();
+        break;
+      }
+    }
+
+    const focalPatterns = [/(?:client focal[:\s]*|focal point[:\s]*|contact[:\s]*)([^\n\r]+)/i];
+    for (const pattern of focalPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        parsedData.clientFocalPoint = match[1].trim();
+        break;
+      }
+    }
+
+    const equipmentTypePatterns = [
+      /(?:equipment type[:\s]*|type[:\s]*)([^\n\r]+)/i,
+      /(?:heat exchanger|pressure vessel|reactor|storage tank|distillation column)/i
+    ];
+    const equipmentTypes = ['Heat Exchanger', 'Pressure Vessel', 'Reactor', 'Storage Tank', 'Distillation Column'];
+    for (const et of equipmentTypes) {
+      if (lowerText.includes(et.toLowerCase())) {
+        parsedData.equipmentType = et;
+        break;
+      }
+    }
+    if (!parsedData.equipmentType) {
+      for (const pattern of equipmentTypePatterns) {
+        const match = text.match(pattern);
+        if (match && match[1] && match[1].trim().length > 2) {
+          parsedData.equipmentType = match[1].trim();
+          break;
+        }
+      }
+    }
+
+    const tagPatterns = [/(?:tag number[:\s]*|tag[:\s]*|tag no[:\s]*)([^\n\r]+)/i];
+    for (const pattern of tagPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 0) {
+        parsedData.tagNumber = match[1].trim();
+        break;
+      }
+    }
+
+    const jobPatterns = [/(?:job number[:\s]*|job[:\s]*|job no[:\s]*)([^\n\r]+)/i];
+    for (const pattern of jobPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 0) {
+        parsedData.jobNumber = match[1].trim();
+        break;
+      }
+    }
+
+    const msnPatterns = [/(?:msn[:\s]*|serial[:\s]*|manufacturing serial[:\s]*)([^\n\r]+)/i];
+    for (const pattern of msnPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 0) {
+        parsedData.manufacturingSerial = match[1].trim();
+        break;
+      }
+    }
+
+    const sizePatterns = [/(?:size[:\s]*|dimension[:\s]*)([^\n\r]+)/i];
+    for (const pattern of sizePatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 0) {
+        parsedData.size = match[1].trim();
+        break;
+      }
+    }
+
+    const materialPatterns = [/(?:material[:\s]*|grade[:\s]*)([^\n\r]+)/i];
+    for (const pattern of materialPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 0) {
+        parsedData.material = match[1].trim();
+        break;
+      }
+    }
+
+    const designCodePatterns = [/(?:design code[:\s]*|code[:\s]*|asme[:\s]*)([^\n\r]+)/i];
+    for (const pattern of designCodePatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 0) {
+        parsedData.designCode = match[1].trim();
+        break;
+      }
+    }
+
+    const scopePatterns = [
+      /(?:scope[:\s]*|description[:\s]*|work[:\s]*|scope of work[:\s]*)([^\n\r]+)/i,
+      /(?:includes[:\s]*)([^\n\r]+)/i
+    ];
+    for (const pattern of scopePatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 10) {
+        parsedData.scopeDescription = match[1].trim();
+        break;
+      }
+    }
+
+    if (lowerText.includes('petrochemical') || lowerText.includes('chemical') || lowerText.includes('refinery')) {
+      parsedData.clientIndustry = 'Petrochemical';
+    } else if (lowerText.includes('pharmaceutical') || lowerText.includes('pharma')) {
+      parsedData.clientIndustry = 'Pharmaceutical';
+    } else if (lowerText.includes('oil') || lowerText.includes('gas')) {
+      parsedData.clientIndustry = 'Oil & Gas';
+    } else if (lowerText.includes('power') || lowerText.includes('energy')) {
+      parsedData.clientIndustry = 'Power & Energy';
+    } else if (lowerText.includes('steel') || lowerText.includes('metal')) {
+      parsedData.clientIndustry = 'Steel & Metal';
+    }
+
+    const datePatterns = [
+      /(?:sales order date[:\s]*|order date[:\s]*)([^\n\r]+)/i,
+      /(?:deadline[:\s]*|completion[:\s]*|due[:\s]*|delivery[:\s]*)([^\n\r]+)/i,
+      /(?:by[:\s]*)(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
+      /(?:by[:\s]*)(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/i
+    ];
+    for (const pattern of datePatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim().length > 3) {
+        const date = new Date(match[1].trim());
+        if (!isNaN(date.getTime())) {
+          parsedData.completionDate = date.toISOString().split('T')[0];
+          if (!parsedData.salesOrderDate) parsedData.salesOrderDate = parsedData.completionDate;
+          break;
+        }
+      }
+    }
+
+    parsedData.servicesIncluded = {
+      design: lowerText.includes('design') || lowerText.includes('engineering'),
+      manufacturing: lowerText.includes('manufacturing') || lowerText.includes('fabrication'),
+      testing: lowerText.includes('testing') || lowerText.includes('inspection'),
+      documentation: lowerText.includes('documentation') || lowerText.includes('certification'),
+      installationSupport: lowerText.includes('installation') || lowerText.includes('erection'),
+      commissioning: lowerText.includes('commissioning') || lowerText.includes('startup')
+    };
+
+    return parsedData as Partial<StandaloneEquipmentFormData> & { equipmentType?: string; tagNumber?: string; jobNumber?: string; manufacturingSerial?: string; size?: string; material?: string; designCode?: string };
+  };
+
   const toggleAccordion = (field: string) => {
     setExpandedFields(prev => ({ ...prev, [field]: !prev[field] }));
   };
@@ -1186,10 +1602,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
               id="smartDocument"
               type="file"
               accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
-              onChange={(e) => {
-                // Smart document upload logic will be added later
-                // console.log('Smart document upload:', e.target.files?.[0]);
-              }}
+              onChange={(e) => handleSmartDocumentUpload(e.target.files?.[0] || null)}
               className="text-xs sm:text-sm border-purple-300 focus:border-purple-500 focus:ring-purple-500 transition-all duration-200 h-8 sm:h-10"
             />
             <p className="text-[10px] sm:text-xs text-gray-600">
@@ -1242,7 +1655,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
                       className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0"
                   />
                   <Label htmlFor={equipmentType} className="text-xs sm:text-sm font-medium text-gray-700 cursor-pointer">
-                    {equipmentType}
+                    {equipmentType === 'Distillation Column' ? 'Column' : equipmentType}
                   </Label>
           </div>
 
@@ -1270,7 +1683,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
                       <Card key={equipment.id} className="p-3 sm:p-4 bg-white border border-gray-200">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mb-2 sm:mb-3">
               <h6 className="text-sm sm:text-base font-semibold text-gray-800">
-                            {equipmentType} - Unit {index + 1}
+                            {equipmentType === 'Distillation Column' ? 'Column' : equipmentType} - Unit {index + 1}
               </h6>
                           <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-blue-100 text-blue-800 text-xs sm:text-sm rounded-full w-fit">
                             Equipment {index + 1}

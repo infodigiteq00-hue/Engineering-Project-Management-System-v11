@@ -424,17 +424,17 @@ const Index = () => {
             scopeOfWork: project.scope_of_work || '',
             // Add default values for other fields
             salesOrderDate: project.sales_order_date || '',
-            clientIndustry: project.client_industry || 'Petrochemical',
+            clientIndustry: project.client_industry || 'TBD',
             servicesIncluded: project.services_included ? 
               (typeof project.services_included === 'object' ? 
                 Object.entries(project.services_included)
                   .filter(([_, value]) => value === true)
                   .map(([key, _]) => key) : 
                 project.services_included) : [],
-            consultant: project.consultant || 'ABC Consultants',
-            tpiAgency: project.tpi_agency || 'Bureau Veritas',
+            consultant: project.consultant || 'TBD',
+            tpiAgency: project.tpi_agency || 'TBD',
             clientFocalPoint: project.client_focal_point || 'Not specified',
-            vdcrManager: project.vdcr_manager || 'Quality Team Lead',
+            vdcrManager: project.vdcr_manager || 'TBD',
             kickoffMeetingNotes: project.kickoff_meeting_notes || '',
             specialProductionNotes: project.special_production_notes || '',
             equipmentBreakdown: equipmentBreakdown,
@@ -1146,17 +1146,17 @@ const Index = () => {
           scopeOfWork: project.scope_of_work || '',
           // Add default values for other fields
           salesOrderDate: project.sales_order_date || '',
-          clientIndustry: project.client_industry || 'Petrochemical',
+          clientIndustry: project.client_industry || 'TBD',
           servicesIncluded: project.services_included ? 
             (typeof project.services_included === 'object' ? 
               Object.entries(project.services_included)
                 .filter(([_, value]) => value === true)
                 .map(([key, _]) => key) : 
               project.services_included) : [],
-          consultant: project.consultant || 'ABC Consultants',
-          tpiAgency: project.tpi_agency || 'Bureau Veritas',
+          consultant: project.consultant || 'TBD',
+          tpiAgency: project.tpi_agency || 'TBD',
           clientFocalPoint: project.client_focal_point || 'Not specified',
-          vdcrManager: project.vdcr_manager || 'Quality Team Lead',
+          vdcrManager: project.vdcr_manager || 'TBD',
           kickoffMeetingNotes: project.kickoff_meeting_notes || '',
           specialProductionNotes: project.special_production_notes || '',
           equipmentBreakdown: equipmentBreakdown,
@@ -2591,8 +2591,9 @@ Note: Please download the Recommendation Letter template using the link above, f
                               const standardKeys = ['pressureVessel', 'heatExchanger', 'reactor', 'storageTank'];
                               Object.entries(equipmentBreakdown).forEach(([key, count]) => {
                                 if (!standardKeys.includes(key) && (count as number) > 0) {
-                                  // Convert key back to readable name
-                                  const readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                                  // Convert key back to readable name (Distillation Column → Column for UI)
+                                  let readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                                  if (key === 'distillationcolumn' || readableName === 'Distillationcolumn') readableName = 'Column';
                                   const colors = ['indigo', 'pink', 'red', 'yellow', 'teal', 'cyan'];
                                   const colorIndex = equipmentTypes.length % colors.length;
                                   equipmentTypes.push({ 
@@ -2742,8 +2743,9 @@ Note: Please download the Recommendation Letter template using the link above, f
                             const standardKeys = ['pressureVessel', 'heatExchanger', 'reactor', 'storageTank'];
                             Object.entries(equipmentBreakdown).forEach(([key, count]) => {
                               if (!standardKeys.includes(key) && (count as number) > 0) {
-                                // Convert key back to readable name
-                                const readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                                // Convert key back to readable name (Distillation Column → Column for UI)
+                                let readableName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                                if (key === 'distillationcolumn' || readableName === 'Distillationcolumn') readableName = 'Column';
                                 const colors = ['indigo', 'pink', 'red', 'yellow', 'teal', 'cyan'];
                                 const colorIndex = equipmentTypes.length % colors.length;
                                 equipmentTypes.push({ 

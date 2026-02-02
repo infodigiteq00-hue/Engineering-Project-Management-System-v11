@@ -4612,7 +4612,7 @@ Industry: Petrochemical`;
                     className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0"
                   />
                   <Label htmlFor={equipmentType} className="text-xs sm:text-sm font-medium text-gray-700 truncate">
-                    {equipmentType}
+                    {equipmentType === 'Distillation Column' ? 'Column' : equipmentType}
                   </Label>
                 </div>
                 
@@ -4640,7 +4640,7 @@ Industry: Petrochemical`;
                     <Card key={equipment.id} className="p-3 sm:p-4 bg-white border border-gray-200">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mb-2 sm:mb-3">
                         <h6 className="text-sm sm:text-base font-semibold text-gray-800">
-                          {equipmentType} - Unit {index + 1}
+                          {equipmentType === 'Distillation Column' ? 'Column' : equipmentType} - Unit {index + 1}
                         </h6>
                         <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-blue-100 text-blue-800 text-xs sm:text-sm rounded-full w-fit">
                           Equipment {index + 1}

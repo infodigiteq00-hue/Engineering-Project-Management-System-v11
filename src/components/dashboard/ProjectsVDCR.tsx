@@ -1625,9 +1625,9 @@ const handleCreateRevisionEvent = async () => {
             
             // Check if any other fields changed (excluding status change to approved)
             const hasChanges = 
-              formData.clientDocNo !== editingVDCR.clientDocNo ||
-              formData.internalDocNo !== editingVDCR.internalDocNo ||
-              formData.codeStatus !== editingVDCR.codeStatus ||
+              // formData.clientDocNo !== editingVDCR.clientDocNo ||
+              // formData.internalDocNo !== editingVDCR.internalDocNo ||
+              // formData.codeStatus !== editingVDCR.codeStatus ||
               (formData.status !== editingVDCR.status && !isStatusChangingToApproved) ||
               formData.remarks !== (editingVDCR.remarks || '') ||
               JSON.stringify(selectedEquipments) !== JSON.stringify(editingVDCR.equipmentTagNo) ||

@@ -276,7 +276,7 @@ const EquipmentCard: React.FC<EquipmentCardProps> = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2 flex-wrap">
             <h3 className="text-sm sm:text-base md:text-lg lg:text-xl xl:text-xl font-bold text-gray-900 truncate">
-              {equipment.name || equipment.type}
+              {equipment.name || (equipment.type === 'Distillation Column' ? 'Column' : equipment.type)}
             </h3>
             <Badge className={`text-[9px] sm:text-[10px] md:text-xs px-1 sm:px-1.5 md:px-2 py-0.5 flex-shrink-0 ${getStatusColor(equipment.status)}`}>
               {getDisplayStatus(equipment)}
