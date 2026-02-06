@@ -32,7 +32,7 @@ const VDCRHeader: React.FC<VDCRHeaderProps> = ({
         </Button>
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{projectName}</h1>
-          <p className="text-sm text-gray-600">VDCR (Vendor Document Control Register)</p>
+          <p className="text-sm text-gray-600">Documentation</p>
         </div>
       </div>
       
@@ -53,7 +53,7 @@ const VDCRHeader: React.FC<VDCRHeaderProps> = ({
           className="flex items-center gap-2"
         >
           <Download className="w-4 h-4" />
-          Export VDCR
+          Export Documents
         </Button>
         <Button
           size="sm"

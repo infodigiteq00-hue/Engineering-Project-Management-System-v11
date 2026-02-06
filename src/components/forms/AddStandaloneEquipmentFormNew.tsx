@@ -14,6 +14,9 @@ import { fastAPI } from "@/lib/api";
 interface AddStandaloneEquipmentFormNewProps {
   onClose: () => void;
   onSubmit: (equipmentData: any) => void;
+  /** When set, form opens in edit mode with this equipment's data pre-filled */
+  editData?: any;
+  isEditMode?: boolean;
 }
 
 interface StandaloneEquipmentFormData {
@@ -49,15 +52,21 @@ interface StandaloneEquipmentFormData {
     commissioning: boolean;
   };
   scopeDescription: string;
-  unpricedPOFile: File | null;
-  designInputsPID: File | null;
-  clientReferenceDoc: File | null;
+  unpricedPOFile: File[] | null;
+  designInputsPID: File[] | null;
+  clientReferenceDoc: File[] | null;
   otherDocuments: File[] | null;
   kickoffMeetingNotes: string;
   specialProductionNotes: string;
 }
 
-const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquipmentFormNewProps) => {
+const getCustomField = (eq: any, name: string): string => {
+  if (!eq?.custom_fields || !Array.isArray(eq.custom_fields)) return '';
+  const f = eq.custom_fields.find((x: any) => x.name === name);
+  return (f?.value ?? '').trim();
+};
+
+const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit, editData, isEditMode }: AddStandaloneEquipmentFormNewProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -107,6 +116,63 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
     kickoffMeetingNotes: '',
     specialProductionNotes: ''
   });
+
+  // Pre-fill form when in edit mode
+  useEffect(() => {
+    if (!isEditMode || !editData) return;
+    const eq = editData;
+    const servicesIncluded = (eq.servicesIncluded && typeof eq.servicesIncluded === 'object')
+      ? {
+          design: !!eq.servicesIncluded.design,
+          manufacturing: !!eq.servicesIncluded.manufacturing,
+          testing: !!eq.servicesIncluded.testing,
+          documentation: !!eq.servicesIncluded.documentation,
+          installationSupport: !!eq.servicesIncluded.installationSupport,
+          commissioning: !!eq.servicesIncluded.commissioning
+        }
+      : { design: false, manufacturing: false, testing: false, documentation: false, installationSupport: false, commissioning: false };
+    setFormData({
+      equipmentType: eq.type || '',
+      tagNumber: eq.tagNumber || '',
+      jobNumber: eq.jobNumber || '',
+      manufacturingSerial: eq.manufacturingSerial || '',
+      size: eq.size || '',
+      material: eq.material || '',
+      designCode: eq.designCode || '',
+      equipmentDocuments: [],
+      clientName: eq.clientName ?? getCustomField(eq, 'Client Name'),
+      plantLocation: eq.plantLocation ?? getCustomField(eq, 'Plant Location'),
+      poNumber: eq.poNumber ?? getCustomField(eq, 'PO Number'),
+      salesOrderDate: (eq.salesOrderDate ?? getCustomField(eq, 'Sales Order Date')) ? String(eq.salesOrderDate ?? getCustomField(eq, 'Sales Order Date')).split('T')[0] : '',
+      completionDate: (eq.completionDate ?? getCustomField(eq, 'Completion Date')) ? String(eq.completionDate ?? getCustomField(eq, 'Completion Date')).split('T')[0] : '',
+      clientIndustry: eq.clientIndustry ?? getCustomField(eq, 'Client Industry'),
+      equipmentManager: eq.equipmentManager ?? getCustomField(eq, 'Equipment Manager'),
+      consultant: eq.consultant ?? getCustomField(eq, 'Consultant'),
+      tpiAgency: eq.tpiAgency ?? getCustomField(eq, 'TPI Agency'),
+      clientFocalPoint: eq.clientFocalPoint ?? getCustomField(eq, 'Client Focal Point'),
+      servicesIncluded,
+      scopeDescription: eq.scopeDescription ?? getCustomField(eq, 'Scope Description'),
+      unpricedPOFile: null,
+      designInputsPID: null,
+      clientReferenceDoc: null,
+      otherDocuments: null,
+      kickoffMeetingNotes: eq.kickoffMeetingNotes ?? getCustomField(eq, 'Kickoff Meeting Notes'),
+      specialProductionNotes: eq.specialProductionNotes ?? getCustomField(eq, 'Special Production Notes')
+    });
+    const eqType = eq.type || 'Equipment';
+    setEquipmentDetails({
+      [eqType]: [{
+        id: eq.id,
+        tagNumber: eq.tagNumber || '',
+        jobNumber: eq.jobNumber || '',
+        manufacturingSerial: eq.manufacturingSerial || '',
+        size: eq.size || '',
+        material: eq.material || '',
+        designCode: eq.designCode || '',
+        documents: []
+      }]
+    });
+  }, [isEditMode, editData?.id]);
 
   // Custom equipment type state
   const [customEquipmentTypes, setCustomEquipmentTypes] = useState<string[]>([]);
@@ -557,422 +623,6 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
     setFormData(prev => ({ ...prev, [field]: files }));
   };
 
-  const handleSmartDocumentUpload = async (file: File | null) => {
-    if (!file) return;
-
-    try {
-      toast({
-        title: "Processing Document",
-        description: "Please wait while we extract data!",
-        variant: "default"
-      });
-
-      let extractedText = '';
-
-      if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
-        extractedText = await extractTextFromExcel(file);
-      } else if (file.name.toLowerCase().endsWith('.docx') || file.name.toLowerCase().endsWith('.doc')) {
-        extractedText = await extractTextFromWord(file);
-      } else if (file.name.toLowerCase().endsWith('.pdf')) {
-        extractedText = await extractTextFromPDF(file);
-      } else if (file.name.toLowerCase().endsWith('.txt')) {
-        extractedText = await file.text();
-      } else if (file.type === 'text/plain') {
-        extractedText = await file.text();
-      } else if (file.type === 'application/pdf') {
-        extractedText = await extractTextFromPDF(file);
-      } else if (file.type.includes('word') || file.type.includes('document')) {
-        extractedText = await extractTextFromWord(file);
-      } else if (file.type.includes('sheet') || file.type.includes('excel')) {
-        extractedText = await extractTextFromExcel(file);
-      } else {
-        toast({
-          title: "Unsupported File Type",
-          description: "Please upload PDF, Word, Excel, or text files.",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      const parsedData = parseDocumentText(extractedText);
-
-      setFormData(prev => ({
-        ...prev,
-        ...parsedData
-      }));
-
-      if (parsedData.equipmentType) {
-        const type = parsedData.equipmentType;
-        setEquipmentDetails(prev => ({
-          ...prev,
-          [type]: [{
-            id: `${type}-1`,
-            tagNumber: parsedData.tagNumber || '',
-            jobNumber: parsedData.jobNumber || '',
-            manufacturingSerial: parsedData.manufacturingSerial || '',
-            size: parsedData.size || '',
-            material: parsedData.material || '',
-            designCode: parsedData.designCode || '',
-            documents: []
-          }]
-        }));
-      }
-
-      const filledFields = Object.keys(parsedData).filter(key => parsedData[key as keyof typeof parsedData]);
-
-      if (filledFields.length > 0) {
-        toast({
-          title: "Document Processed",
-          description: `Form fields have been auto-filled: ${filledFields.join(', ')}. Please review and complete remaining fields.`,
-          variant: "default"
-        });
-      } else {
-        toast({
-          title: "Document Processed",
-          description: "No fields could be auto-filled. Please fill the form manually.",
-          variant: "default"
-        });
-      }
-    } catch (error) {
-      console.error('❌ Error processing document:', error);
-      toast({
-        title: "Error",
-        description: "Error processing document. Please try again or fill the form manually.",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const extractTextFromPDF = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      script.onload = async () => {
-        try {
-          const pdfjsLib = (window as any).pdfjsLib;
-          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-          const arrayBuffer = await file.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-          let fullText = '';
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-            const pageText = textContent.items.map((item: any) => item.str).join(' ');
-            fullText += pageText + '\n';
-          }
-          resolve(fullText);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      script.onerror = () => reject(new Error('Failed to load PDF.js'));
-      document.head.appendChild(script);
-    });
-  };
-
-  const extractTextFromWord = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
-      script.onload = async () => {
-        try {
-          const mammoth = (window as any).mammoth;
-          const arrayBuffer = await file.arrayBuffer();
-          const result = await mammoth.extractRawText({ arrayBuffer });
-          resolve(result.value);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      script.onerror = () => reject(new Error('Failed to load mammoth.js'));
-      document.head.appendChild(script);
-    });
-  };
-
-  const extractTextFromExcel = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      if ((window as any).XLSX) {
-        processExcelFile(file).then(resolve).catch(reject);
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-      script.onload = async () => {
-        try {
-          const result = await processExcelFile(file);
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      script.onerror = () => reject(new Error('Failed to load xlsx library'));
-      document.head.appendChild(script);
-
-      async function processExcelFile(f: File): Promise<string> {
-        try {
-          const XLSX = (window as any).XLSX;
-          const arrayBuffer = await f.arrayBuffer();
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-          let fullText = '';
-          workbook.SheetNames.forEach((sheetName: string) => {
-            const worksheet = workbook.Sheets[sheetName];
-            try {
-              const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-              if (jsonData.length >= 2) {
-                const headers = jsonData[0];
-                const dataRow = jsonData[1];
-                (headers as any[]).forEach((header: any, index: number) => {
-                  if (header && dataRow && (dataRow as any[])[index]) {
-                    const fieldName = header.toString().trim();
-                    const fieldValue = (dataRow as any[])[index].toString().trim();
-                    if (fieldName && fieldValue) {
-                      fullText += `${fieldName}: ${fieldValue}\n`;
-                    }
-                  }
-                });
-              } else {
-                (jsonData as any[]).forEach((row: any) => {
-                  if (Array.isArray(row)) {
-                    const rowText = row.filter((cell: any) => cell && cell.toString().trim()).join(' ');
-                    if (rowText.trim()) fullText += rowText + '\n';
-                  }
-                });
-              }
-            } catch {
-              try {
-                fullText += XLSX.utils.sheet_to_csv(worksheet) + '\n';
-              } catch {
-                const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
-                for (let row = range.s.r; row <= range.e.r; row++) {
-                  for (let col = range.s.c; col <= range.e.c; col++) {
-                    const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: col })];
-                    if (cell && cell.v) fullText += cell.v.toString() + ' ';
-                  }
-                  fullText += '\n';
-                }
-              }
-            }
-          });
-          return fullText.trim() || '';
-        } catch (error) {
-          console.error('Excel processing error:', error);
-          return '';
-        }
-      }
-    });
-  };
-
-  const parseDocumentText = (text: string): Partial<StandaloneEquipmentFormData> & { equipmentType?: string; tagNumber?: string; jobNumber?: string; manufacturingSerial?: string; size?: string; material?: string; designCode?: string } => {
-    const parsedData: Partial<StandaloneEquipmentFormData> & Record<string, string | undefined> = {};
-    const lowerText = text.toLowerCase();
-
-    const clientPatterns = [
-      /(?:client name[:\s]*)([^\n\r]+)/i,
-      /(?:client[:\s]*|customer[:\s]*|company[:\s]*|organization[:\s]*)([^\n\r]+)/i,
-      /(?:for[:\s]*)([^\n\r]*ltd[^\n\r]*)/i,
-      /(?:for[:\s]*)([^\n\r]*industries[^\n\r]*)/i
-    ];
-    for (const pattern of clientPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        parsedData.clientName = match[1].trim();
-        break;
-      }
-    }
-
-    const locationPatterns = [
-      /(?:plant location[:\s]*)([^\n\r]+)/i,
-      /(?:location[:\s]*|plant[:\s]*|site[:\s]*|address[:\s]*)([^\n\r]+)/i
-    ];
-    for (const pattern of locationPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        parsedData.plantLocation = match[1].trim();
-        break;
-      }
-    }
-
-    const poPatterns = [
-      /(?:po number[:\s]*)([^\n\r]+)/i,
-      /(?:po[:\s]*|purchase order[:\s]*|order[:\s]*)([^\n\r]+)/i,
-      /(po-\d{4}-\d{3,4})/i
-    ];
-    for (const pattern of poPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        parsedData.poNumber = match[1].trim();
-        break;
-      }
-    }
-
-    const emPatterns = [
-      /(?:equipment manager[:\s]*)([^\n\r]+)/i,
-      /(?:project manager[:\s]*|manager[:\s]*|pm[:\s]*)([^\n\r]+)/i
-    ];
-    for (const pattern of emPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        parsedData.equipmentManager = match[1].trim();
-        break;
-      }
-    }
-
-    const consultantPatterns = [/(?:consultant[:\s]*)([^\n\r]+)/i];
-    for (const pattern of consultantPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        parsedData.consultant = match[1].trim();
-        break;
-      }
-    }
-
-    const tpiPatterns = [/(?:tpi agency[:\s]*|tpi[:\s]*|inspection[:\s]*)([^\n\r]+)/i];
-    for (const pattern of tpiPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        parsedData.tpiAgency = match[1].trim();
-        break;
-      }
-    }
-
-    const focalPatterns = [/(?:client focal[:\s]*|focal point[:\s]*|contact[:\s]*)([^\n\r]+)/i];
-    for (const pattern of focalPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        parsedData.clientFocalPoint = match[1].trim();
-        break;
-      }
-    }
-
-    const equipmentTypePatterns = [
-      /(?:equipment type[:\s]*|type[:\s]*)([^\n\r]+)/i,
-      /(?:heat exchanger|pressure vessel|reactor|storage tank|distillation column)/i
-    ];
-    const equipmentTypes = ['Heat Exchanger', 'Pressure Vessel', 'Reactor', 'Storage Tank', 'Distillation Column'];
-    for (const et of equipmentTypes) {
-      if (lowerText.includes(et.toLowerCase())) {
-        parsedData.equipmentType = et;
-        break;
-      }
-    }
-    if (!parsedData.equipmentType) {
-      for (const pattern of equipmentTypePatterns) {
-        const match = text.match(pattern);
-        if (match && match[1] && match[1].trim().length > 2) {
-          parsedData.equipmentType = match[1].trim();
-          break;
-        }
-      }
-    }
-
-    const tagPatterns = [/(?:tag number[:\s]*|tag[:\s]*|tag no[:\s]*)([^\n\r]+)/i];
-    for (const pattern of tagPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 0) {
-        parsedData.tagNumber = match[1].trim();
-        break;
-      }
-    }
-
-    const jobPatterns = [/(?:job number[:\s]*|job[:\s]*|job no[:\s]*)([^\n\r]+)/i];
-    for (const pattern of jobPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 0) {
-        parsedData.jobNumber = match[1].trim();
-        break;
-      }
-    }
-
-    const msnPatterns = [/(?:msn[:\s]*|serial[:\s]*|manufacturing serial[:\s]*)([^\n\r]+)/i];
-    for (const pattern of msnPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 0) {
-        parsedData.manufacturingSerial = match[1].trim();
-        break;
-      }
-    }
-
-    const sizePatterns = [/(?:size[:\s]*|dimension[:\s]*)([^\n\r]+)/i];
-    for (const pattern of sizePatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 0) {
-        parsedData.size = match[1].trim();
-        break;
-      }
-    }
-
-    const materialPatterns = [/(?:material[:\s]*|grade[:\s]*)([^\n\r]+)/i];
-    for (const pattern of materialPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 0) {
-        parsedData.material = match[1].trim();
-        break;
-      }
-    }
-
-    const designCodePatterns = [/(?:design code[:\s]*|code[:\s]*|asme[:\s]*)([^\n\r]+)/i];
-    for (const pattern of designCodePatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 0) {
-        parsedData.designCode = match[1].trim();
-        break;
-      }
-    }
-
-    const scopePatterns = [
-      /(?:scope[:\s]*|description[:\s]*|work[:\s]*|scope of work[:\s]*)([^\n\r]+)/i,
-      /(?:includes[:\s]*)([^\n\r]+)/i
-    ];
-    for (const pattern of scopePatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 10) {
-        parsedData.scopeDescription = match[1].trim();
-        break;
-      }
-    }
-
-    if (lowerText.includes('petrochemical') || lowerText.includes('chemical') || lowerText.includes('refinery')) {
-      parsedData.clientIndustry = 'Petrochemical';
-    } else if (lowerText.includes('pharmaceutical') || lowerText.includes('pharma')) {
-      parsedData.clientIndustry = 'Pharmaceutical';
-    } else if (lowerText.includes('oil') || lowerText.includes('gas')) {
-      parsedData.clientIndustry = 'Oil & Gas';
-    } else if (lowerText.includes('power') || lowerText.includes('energy')) {
-      parsedData.clientIndustry = 'Power & Energy';
-    } else if (lowerText.includes('steel') || lowerText.includes('metal')) {
-      parsedData.clientIndustry = 'Steel & Metal';
-    }
-
-    const datePatterns = [
-      /(?:sales order date[:\s]*|order date[:\s]*)([^\n\r]+)/i,
-      /(?:deadline[:\s]*|completion[:\s]*|due[:\s]*|delivery[:\s]*)([^\n\r]+)/i,
-      /(?:by[:\s]*)(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-      /(?:by[:\s]*)(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/i
-    ];
-    for (const pattern of datePatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim().length > 3) {
-        const date = new Date(match[1].trim());
-        if (!isNaN(date.getTime())) {
-          parsedData.completionDate = date.toISOString().split('T')[0];
-          if (!parsedData.salesOrderDate) parsedData.salesOrderDate = parsedData.completionDate;
-          break;
-        }
-      }
-    }
-
-    parsedData.servicesIncluded = {
-      design: lowerText.includes('design') || lowerText.includes('engineering'),
-      manufacturing: lowerText.includes('manufacturing') || lowerText.includes('fabrication'),
-      testing: lowerText.includes('testing') || lowerText.includes('inspection'),
-      documentation: lowerText.includes('documentation') || lowerText.includes('certification'),
-      installationSupport: lowerText.includes('installation') || lowerText.includes('erection'),
-      commissioning: lowerText.includes('commissioning') || lowerText.includes('startup')
-    };
-
-    return parsedData as Partial<StandaloneEquipmentFormData> & { equipmentType?: string; tagNumber?: string; jobNumber?: string; manufacturingSerial?: string; size?: string; material?: string; designCode?: string };
-  };
-
   const toggleAccordion = (field: string) => {
     setExpandedFields(prev => ({ ...prev, [field]: !prev[field] }));
   };
@@ -1090,14 +740,18 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
     
     try {
       // Prepare data with equipmentDetails (multiple units support)
-      const submitData = {
+      const submitData: any = {
         ...formData,
         equipmentDetails, // Include all equipment units
         equipmentManagerContacts // Include contact details for email invitation
       };
+      if (isEditMode && editData?.id) {
+        submitData.isEditMode = true;
+        submitData.equipmentId = editData.id;
+      }
       
       // Call the onSubmit handler passed from parent component
-      // The parent (EquipmentGrid) will handle the API call
+      // The parent (EquipmentGrid) will handle the API call (create or update)
       await onSubmit(submitData);
       
       // If onSubmit succeeds, show success screen and close form after a delay
@@ -1155,7 +809,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
       {/* Progress Bar */}
       <div className="w-full bg-gray-200 rounded-full h-2 sm:h-3 overflow-hidden">
         <div 
-          className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-700 ease-out"
+          className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-700 ease-out"
           style={{ width: `${getStepProgress()}%` }}
         />
       </div>
@@ -1167,7 +821,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
             key={index}
             className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full transition-all duration-300 ${
               index + 1 <= currentStep 
-                ? 'bg-gradient-to-r from-blue-500 to-purple-600 scale-110' 
+                ? 'bg-gradient-to-r from-blue-500 to-blue-600 scale-110' 
                 : 'bg-gray-300'
             }`}
           />
@@ -1586,32 +1240,6 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
 
   const renderStep1 = () => (
     <div className={`space-y-6 transition-all duration-300 ${isAnimating ? 'opacity-0 transform translate-x-4' : 'opacity-100 transform translate-x-0'}`}>
-      {/* Smart Document Upload */}
-      <div className="space-y-3 sm:space-y-4">
-        <div className="flex items-center space-x-2 sm:space-x-3 mb-3 sm:mb-4">
-          <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600 flex-shrink-0" />
-          <h4 className="text-base sm:text-lg font-semibold text-gray-800">Smart Document Upload</h4>
-        </div>
-        
-        <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-3 sm:p-4">
-          <div className="space-y-2 sm:space-y-3">
-            <Label htmlFor="smartDocument" className="text-xs sm:text-sm font-medium text-gray-700">
-              Upload Equipment Document (PDF, Word, Excel) - Auto-fill Form
-            </Label>
-            <Input
-              id="smartDocument"
-              type="file"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
-              onChange={(e) => handleSmartDocumentUpload(e.target.files?.[0] || null)}
-              className="text-xs sm:text-sm border-purple-300 focus:border-purple-500 focus:ring-purple-500 transition-all duration-200 h-8 sm:h-10"
-            />
-            <p className="text-[10px] sm:text-xs text-gray-600">
-              Upload any equipment document and we'll automatically extract and fill form fields for you!
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Equipment Information */}
       <div className="space-y-3 sm:space-y-4">
         <div className="flex items-center space-x-2 sm:space-x-3 mb-3 sm:mb-4">
@@ -1998,7 +1626,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
       {/* Scope of Work */}
       <div className="space-y-3 sm:space-y-4">
         <div className="flex items-center space-x-2 sm:space-x-3 mb-3 sm:mb-4">
-          <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600 flex-shrink-0" />
+          <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600 flex-shrink-0" />
           <h4 className="text-base sm:text-lg font-semibold text-gray-800">Scope of Work</h4>
         </div>
         
@@ -2053,9 +1681,11 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
             <Input
               id="unpricedPOFile"
               type="file"
-              onChange={(e) => handleFileUpload('unpricedPOFile', e.target.files?.[0] || null)}
+              multiple
+              onChange={(e) => handleFileUpload('unpricedPOFile', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-9 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
           </div>
 
           <div className="space-y-1.5 sm:space-y-2">
@@ -2065,9 +1695,11 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
             <Input
               id="designInputsPID"
               type="file"
-              onChange={(e) => handleFileUpload('designInputsPID', e.target.files?.[0] || null)}
+              multiple
+              onChange={(e) => handleFileUpload('designInputsPID', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-8 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
           </div>
 
           <div className="space-y-1.5 sm:space-y-2">
@@ -2077,9 +1709,11 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
             <Input
               id="clientReferenceDoc"
               type="file"
-              onChange={(e) => handleFileUpload('clientReferenceDoc', e.target.files?.[0] || null)}
+              multiple
+              onChange={(e) => handleFileUpload('clientReferenceDoc', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-8 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
           </div>
 
           <div className="space-y-1.5 sm:space-y-2">
@@ -2090,9 +1724,10 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
               id="otherDocuments"
               type="file"
               multiple
-              onChange={(e) => handleFileUpload('otherDocuments', e.target.files ? Array.from(e.target.files) : null)}
+              onChange={(e) => handleFileUpload('otherDocuments', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-8 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
           </div>
         </div>
       </div>
@@ -2153,11 +1788,13 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
       </div>
       
       <h2 className="text-3xl font-bold text-gray-800 mb-4">
-        🎉 Equipment Created Successfully!
+        {isEditMode ? '✅ Equipment Updated Successfully!' : '🎉 Equipment Created Successfully!'}
       </h2>
       
       <p className="text-lg text-gray-600 mb-6">
-        Your new equipment "<span className="font-semibold text-blue-600">{createdEquipment?.type || formData.equipmentType}</span>" has been added to the dashboard.
+        {isEditMode
+          ? <>Equipment "<span className="font-semibold text-blue-600">{formData.equipmentType}</span>" has been updated.</>
+          : <>Your new equipment "<span className="font-semibold text-blue-600">{createdEquipment?.type || formData.equipmentType}</span>" has been added to the dashboard.</>}
       </p>
       
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8 max-w-md mx-auto">
@@ -2179,7 +1816,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
           onClick={() => {
             onClose();
           }}
-          className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+          className="px-8 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
         >
           <CheckCircle size={20} className="mr-2" />
           Done
@@ -2189,14 +1826,14 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
   );
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
-      <Card className="w-full max-w-5xl max-h-[95vh] overflow-y-auto bg-white">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-2 sm:p-4">
+      <Card className="w-full max-w-5xl max-h-[95vh] overflow-y-auto bg-white shadow-2xl">
         <div className="p-3 sm:p-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4 sm:mb-6">
             <div className="flex-1 min-w-0">
               <h2 className={`text-lg sm:text-xl md:text-2xl font-bold text-gray-800 ${designSystem.components.sectionTitle ? '' : ''}`}>
-                Add Standalone Equipment
+                {isEditMode ? 'Edit Equipment' : 'Add Standalone Equipment'}
               </h2>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose} className="hover:bg-gray-100 p-1 sm:p-2">
@@ -2232,7 +1869,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
                     <Button 
                       type="button" 
                       onClick={nextStep} 
-                      className="flex-1 sm:flex-initial px-4 sm:px-8 py-2 text-xs sm:text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+                      className="flex-1 sm:flex-initial px-4 sm:px-8 py-2 text-xs sm:text-sm bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
                     >
                       <span className="whitespace-nowrap">Next Step</span>
                       <ChevronRight size={14} className="sm:w-4 sm:h-4 ml-1 sm:ml-2" />
@@ -2243,7 +1880,7 @@ const AddStandaloneEquipmentFormNew = ({ onClose, onSubmit }: AddStandaloneEquip
                       className="flex-1 sm:flex-initial px-4 sm:px-6 py-2 text-xs sm:text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
                       disabled={isAnimating || isSubmitting}
                     >
-                      {isSubmitting ? 'Creating...' : 'Create Equipment'}
+                      {isSubmitting ? (isEditMode ? 'Saving...' : 'Creating...') : (isEditMode ? 'Save Changes' : 'Create Equipment')}
                     </Button>
                   )}
                 </div>

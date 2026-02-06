@@ -24,10 +24,12 @@ import {
   Eye,
   Pencil,
   Save,
-  X
+  X,
+  Trash2
 } from "lucide-react";
 import { designSystem } from "@/lib/design-system";
 import { useToast } from "@/hooks/use-toast";
+import { deleteProjectDocument } from "@/lib/api";
 
 interface Project {
   id: string;
@@ -95,6 +97,8 @@ interface VDCRRecord {
   documentUrl?: string;
 }
 
+type ProjectDocumentType = 'unpriced_po_documents' | 'design_inputs_documents' | 'client_reference_documents' | 'other_documents';
+
 interface ProjectDetailsProps {
   project: Project;
   onBack: () => void;
@@ -104,9 +108,10 @@ interface ProjectDetailsProps {
   onEditProject?: (projectId: string) => void;
   onDeleteProject?: (projectId: string) => void;
   onCompleteProject?: (projectId: string) => void;
+  onDocumentDeleted?: (projectId: string, documentId: string, documentType: ProjectDocumentType) => void;
 }
 
-const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData = [], onEditProject, onDeleteProject, onCompleteProject }: ProjectDetailsProps) => {
+const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData = [], onEditProject, onDeleteProject, onCompleteProject, onDocumentDeleted }: ProjectDetailsProps) => {
   const [activeTab, setActiveTab] = useState("team-details");
   const { toast } = useToast();
   const currentUserRole = localStorage.getItem('userRole') || '';
@@ -117,6 +122,13 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
     onBack();
     return null;
   }
+
+  const formatDateToDDMMYYYY = (dateStr: string | undefined): string => {
+    if (!dateStr || dateStr === 'Not specified') return 'Not specified';
+    const parts = String(dateStr).split('T')[0].split('-');
+    if (parts.length !== 3) return dateStr;
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  };
 
   // Debug: Log project data
   // // console.log('🔍 ProjectDetails received project:', project);
@@ -353,6 +365,18 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
     }
   };
 
+  const handleDeleteProjectDocument = async (documentId: string, documentType: ProjectDocumentType) => {
+    if (!confirm('Sure you want to delete file?')) return;
+    try {
+      await deleteProjectDocument(documentId, documentType, project.id);
+      toast({ title: 'Success', description: 'Document deleted successfully!' });
+      onDocumentDeleted?.(project.id, documentId, documentType);
+    } catch (error) {
+      console.error('Error deleting project document:', error);
+      toast({ title: 'Error', description: 'Failed to delete document. Please try again.', variant: 'destructive' });
+    }
+  };
+
   const handleEditProject = () => {
     // TODO: Implement edit project functionality
     // // console.log('Edit project:', project.id);
@@ -527,11 +551,11 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
               <Card className="p-4 sm:p-6">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-6 space-y-4 lg:space-y-0">
                   <div className="flex items-center gap-3 sm:gap-4">
-                    <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
                       <Building size={24} className="sm:w-8 sm:h-8 text-white" />
                     </div>
                     <div>
-                      <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                      <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-blue-700 bg-clip-text text-transparent">
                         {project.name}
                       </h2>
                       <p className="text-sm sm:text-base lg:text-lg text-gray-600 mt-1">Team & Project Information</p>
@@ -611,11 +635,11 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                       </div>
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-2 sm:py-3 border-b border-gray-100">
                         <span className="text-xs sm:text-sm font-medium text-gray-600 mb-1 sm:mb-0">PO Date</span>
-                        <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">{project.salesOrderDate || 'Not specified'}</span>
+                        <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">{formatDateToDDMMYYYY(project.salesOrderDate)}</span>
                       </div>
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-2 sm:py-3">
                         <span className="text-xs sm:text-sm font-medium text-gray-600 mb-1 sm:mb-0">Deadline</span>
-                        <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">{project.deadline}</span>
+                        <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">{formatDateToDDMMYYYY(project.deadline)}</span>
                       </div>
                     </div>
                   </div>
@@ -664,7 +688,7 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                         <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">{project.clientFocalPoint || 'Not specified'}</span>
                       </div>
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-2 sm:py-3">
-                        <span className="text-xs sm:text-sm font-medium text-gray-600 mb-1 sm:mb-0">VDCR Manager</span>
+                        <span className="text-xs sm:text-sm font-medium text-gray-600 mb-1 sm:mb-0">Documentation Manager</span>
                         <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">{project.vdcrManager || 'Not specified'}</span>
                       </div>
                     </div>
@@ -694,7 +718,7 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
               {/* Equipment Breakdown */}
               <Card className="p-4 sm:p-6 bg-gray-50 border-0 shadow-sm">
                 <h3 className="text-lg sm:text-xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center">
-                  <Target size={18} className="sm:w-5 sm:h-5 mr-2 text-purple-600" />
+                  <Target size={18} className="sm:w-5 sm:h-5 mr-2 text-blue-600" />
                   Equipment Breakdown
                 </h3>
 
@@ -702,7 +726,7 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                     {isEditMode ? (
                       <>
-                        <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-3 sm:p-4 text-center">
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
                           <input
                             type="number"
                             value={editData.equipmentBreakdown.heatExchanger || 0}
@@ -713,37 +737,37 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                           <div className="text-xs sm:text-sm text-blue-600 font-medium">Heat Exchangers</div>
                         </div>
 
-                        <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-lg p-3 sm:p-4 text-center">
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
                           <input
                             type="number"
                             value={editData.equipmentBreakdown.pressureVessel || 0}
                             onChange={(e) => handleEquipmentBreakdownChange('pressureVessel', e.target.value)}
-                            className="w-12 sm:w-16 text-center text-lg sm:text-2xl font-bold text-green-800 bg-transparent border-none focus:outline-none"
+                            className="w-12 sm:w-16 text-center text-lg sm:text-2xl font-bold text-slate-700 bg-transparent border-none focus:outline-none"
                             min="0"
                           />
-                          <div className="text-xs sm:text-sm text-green-600 font-medium">Pressure Vessels</div>
+                          <div className="text-xs sm:text-sm text-slate-600 font-medium">Pressure Vessels</div>
                         </div>
 
-                        <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 border border-yellow-200 rounded-lg p-3 sm:p-4 text-center">
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
                           <input
                             type="number"
                             value={editData.equipmentBreakdown.storageTank || 0}
                             onChange={(e) => handleEquipmentBreakdownChange('storageTank', e.target.value)}
-                            className="w-12 sm:w-16 text-center text-lg sm:text-2xl font-bold text-yellow-800 bg-transparent border-none focus:outline-none"
+                            className="w-12 sm:w-16 text-center text-lg sm:text-2xl font-bold text-teal-800 bg-transparent border-none focus:outline-none"
                             min="0"
                           />
-                          <div className="text-xs sm:text-sm text-yellow-600 font-medium">Storage Tanks</div>
+                          <div className="text-xs sm:text-sm text-teal-600 font-medium">Storage Tanks</div>
                         </div>
 
-                        <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-lg p-3 sm:p-4 text-center">
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
                           <input
                             type="number"
                             value={editData.equipmentBreakdown.reactor || 0}
                             onChange={(e) => handleEquipmentBreakdownChange('reactor', e.target.value)}
-                            className="w-12 sm:w-16 text-center text-lg sm:text-2xl font-bold text-purple-800 bg-transparent border-none focus:outline-none"
+                            className="w-12 sm:w-16 text-center text-lg sm:text-2xl font-bold text-indigo-800 bg-transparent border-none focus:outline-none"
                             min="0"
                           />
-                          <div className="text-xs sm:text-sm text-purple-600 font-medium">Reactors</div>
+                          <div className="text-xs sm:text-sm text-indigo-600 font-medium">Reactors</div>
                         </div>
 
                         {/* Custom Equipment Types - Individual Cards in Edit Mode */}
@@ -760,54 +784,48 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                               .trim();
                             if (customKey === 'distillationcolumn' || displayName === 'Distillationcolumn') displayName = 'Column';
                             
-                            // Cycle through different colors for custom equipment types
-                            const colorClasses = [
-                              { bg: 'from-indigo-50 to-indigo-100', border: 'border-indigo-200', text: 'text-indigo-800', textLight: 'text-indigo-600' },
-                              { bg: 'from-pink-50 to-pink-100', border: 'border-pink-200', text: 'text-pink-800', textLight: 'text-pink-600' },
-                              { bg: 'from-teal-50 to-teal-100', border: 'border-teal-200', text: 'text-teal-800', textLight: 'text-teal-600' },
-                              { bg: 'from-orange-50 to-orange-100', border: 'border-orange-200', text: 'text-orange-800', textLight: 'text-orange-600' },
-                              { bg: 'from-cyan-50 to-cyan-100', border: 'border-cyan-200', text: 'text-cyan-800', textLight: 'text-cyan-600' },
-                              { bg: 'from-emerald-50 to-emerald-100', border: 'border-emerald-200', text: 'text-emerald-800', textLight: 'text-emerald-600' },
-                              { bg: 'from-rose-50 to-rose-100', border: 'border-rose-200', text: 'text-rose-800', textLight: 'text-rose-600' },
-                              { bg: 'from-violet-50 to-violet-100', border: 'border-violet-200', text: 'text-violet-800', textLight: 'text-violet-600' }
+                            const textColors = [
+                              { text: 'text-blue-800', textLight: 'text-blue-600' },
+                              { text: 'text-slate-700', textLight: 'text-slate-600' },
+                              { text: 'text-teal-800', textLight: 'text-teal-600' },
+                              { text: 'text-indigo-800', textLight: 'text-indigo-600' }
                             ];
-                            const colorClass = colorClasses[index % colorClasses.length];
-                            
+                            const colorClass = textColors[index % textColors.length];
                             return (
-                              <div key={customKey} className={`bg-gradient-to-br ${colorClass.bg} border ${colorClass.border} rounded-lg p-3 sm:p-4 text-center`}>
-                          <input
-                            type="number"
+                              <div key={customKey} className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
+                                <input
+                                  type="number"
                                   value={count}
                                   onChange={(e) => handleEquipmentBreakdownChange(customKey, e.target.value)}
                                   className={`w-12 sm:w-16 text-center text-lg sm:text-2xl font-bold ${colorClass.text} bg-transparent border-none focus:outline-none`}
-                            min="0"
-                          />
+                                  min="0"
+                                />
                                 <div className={`text-xs sm:text-sm ${colorClass.textLight} font-medium`}>{displayName}</div>
-                          </div>
+                              </div>
                             );
                           })}
                       </>
                     ) : (
                       <>
                         {/* Always show all equipment types */}
-                        <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-3 sm:p-4 text-center">
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
                           <div className="text-lg sm:text-2xl font-bold text-blue-800">{project.equipmentBreakdown?.heatExchanger || 0}</div>
                           <div className="text-xs sm:text-sm text-blue-600 font-medium">Heat Exchangers</div>
                         </div>
 
-                        <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-lg p-3 sm:p-4 text-center">
-                          <div className="text-lg sm:text-2xl font-bold text-green-800">{project.equipmentBreakdown?.pressureVessel || 0}</div>
-                          <div className="text-xs sm:text-sm text-green-600 font-medium">Pressure Vessels</div>
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
+                          <div className="text-lg sm:text-2xl font-bold text-slate-700">{project.equipmentBreakdown?.pressureVessel || 0}</div>
+                          <div className="text-xs sm:text-sm text-slate-600 font-medium">Pressure Vessels</div>
                         </div>
 
-                        <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 border border-green-200 rounded-lg p-3 sm:p-4 text-center">
-                          <div className="text-lg sm:text-2xl font-bold text-yellow-800">{project.equipmentBreakdown?.storageTank || 0}</div>
-                          <div className="text-xs sm:text-sm text-yellow-600 font-medium">Storage Tanks</div>
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
+                          <div className="text-lg sm:text-2xl font-bold text-teal-800">{project.equipmentBreakdown?.storageTank || 0}</div>
+                          <div className="text-xs sm:text-sm text-teal-600 font-medium">Storage Tanks</div>
                         </div>
 
-                        <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-lg p-3 sm:p-4 text-center">
-                          <div className="text-lg sm:text-2xl font-bold text-purple-800">{project.equipmentBreakdown?.reactor || 0}</div>
-                          <div className="text-xs sm:text-sm text-purple-600 font-medium">Reactors</div>
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
+                          <div className="text-lg sm:text-2xl font-bold text-indigo-800">{project.equipmentBreakdown?.reactor || 0}</div>
+                          <div className="text-xs sm:text-sm text-indigo-600 font-medium">Reactors</div>
                         </div>
 
                         {/* Custom Equipment Types - Individual Cards */}
@@ -824,24 +842,18 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                               .trim();
                             if (customKey === 'distillationcolumn' || displayName === 'Distillationcolumn') displayName = 'Column';
                             
-                            // Cycle through different colors for custom equipment types
-                            const colorClasses = [
-                              { bg: 'from-indigo-50 to-indigo-100', border: 'border-indigo-200', text: 'text-indigo-800', textLight: 'text-indigo-600' },
-                              { bg: 'from-pink-50 to-pink-100', border: 'border-pink-200', text: 'text-pink-800', textLight: 'text-pink-600' },
-                              { bg: 'from-teal-50 to-teal-100', border: 'border-teal-200', text: 'text-teal-800', textLight: 'text-teal-600' },
-                              { bg: 'from-orange-50 to-orange-100', border: 'border-orange-200', text: 'text-orange-800', textLight: 'text-orange-600' },
-                              { bg: 'from-cyan-50 to-cyan-100', border: 'border-cyan-200', text: 'text-cyan-800', textLight: 'text-cyan-600' },
-                              { bg: 'from-emerald-50 to-emerald-100', border: 'border-emerald-200', text: 'text-emerald-800', textLight: 'text-emerald-600' },
-                              { bg: 'from-rose-50 to-rose-100', border: 'border-rose-200', text: 'text-rose-800', textLight: 'text-rose-600' },
-                              { bg: 'from-violet-50 to-violet-100', border: 'border-violet-200', text: 'text-violet-800', textLight: 'text-violet-600' }
+                            const textColors = [
+                              { text: 'text-blue-800', textLight: 'text-blue-600' },
+                              { text: 'text-slate-700', textLight: 'text-slate-600' },
+                              { text: 'text-teal-800', textLight: 'text-teal-600' },
+                              { text: 'text-indigo-800', textLight: 'text-indigo-600' }
                             ];
-                            const colorClass = colorClasses[index % colorClasses.length];
-                            
+                            const colorClass = textColors[index % textColors.length];
                             return (
-                              <div key={customKey} className={`bg-gradient-to-br ${colorClass.bg} border ${colorClass.border} rounded-lg p-3 sm:p-4 text-center`}>
+                              <div key={customKey} className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 text-center shadow-sm">
                                 <div className={`text-lg sm:text-2xl font-bold ${colorClass.text}`}>{count}</div>
                                 <div className={`text-xs sm:text-sm ${colorClass.textLight} font-medium`}>{displayName}</div>
-                          </div>
+                              </div>
                             );
                           })}
                       </>
@@ -911,7 +923,7 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                     ) : (
                       <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border">
                         <p className="text-xs sm:text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                          {project.scopeOfWork || 'No scope description provided. Please add detailed scope information for this project.'}
+                          {project.scopeOfWork || ' - '}
                         </p>
                       </div>
                     )}
@@ -954,14 +966,25 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                             {project.unpricedPODocuments.map((doc: any, index: number) => {
                               const normalized = normalizeDocument(doc);
                               return (
-                                <div key={doc.id || `unpriced-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-blue-100">
+                                <div key={doc.id || `unpriced-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-blue-100 gap-2">
                                   <span className="text-blue-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{normalized.name}</span>
-                                  <button
-                                    onClick={() => handleDocumentClick(normalized.url, normalized.name, 'PDF', 'Purchase order file for the project')}
-                                    className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex-shrink-0"
-                                  >
-                                    View
-                                  </button>
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleDocumentClick(normalized.url, normalized.name, 'PDF', 'Purchase order file for the project')}
+                                      className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors"
+                                    >
+                                      View
+                                    </button>
+                                    {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && doc.id && (
+                                      <button
+                                        onClick={() => handleDeleteProjectDocument(doc.id, 'unpriced_po_documents')}
+                                        className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                        title="Delete document"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -979,14 +1002,25 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                             {project.designInputsDocuments.map((doc: any, index: number) => {
                               const normalized = normalizeDocument(doc);
                               return (
-                                <div key={doc.id || `design-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-green-100">
+                                <div key={doc.id || `design-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-green-100 gap-2">
                                   <span className="text-green-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{normalized.name}</span>
-                                  <button
-                                    onClick={() => handleDocumentClick(normalized.url, normalized.name, 'PDF', 'Process and instrumentation diagram')}
-                                    className="text-green-600 hover:text-green-800 hover:bg-green-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex-shrink-0"
-                                  >
-                                    View
-                                  </button>
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleDocumentClick(normalized.url, normalized.name, 'PDF', 'Process and instrumentation diagram')}
+                                      className="text-green-600 hover:text-green-800 hover:bg-green-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors"
+                                    >
+                                      View
+                                    </button>
+                                    {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && doc.id && (
+                                      <button
+                                        onClick={() => handleDeleteProjectDocument(doc.id, 'design_inputs_documents')}
+                                        className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                        title="Delete document"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -1002,21 +1036,32 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                       <h4 className="text-base sm:text-lg font-semibold text-gray-700 mb-2 sm:mb-3">Additional Documents</h4>
 
                       {/* Client Reference Doc */}
-                      <div className="p-3 sm:p-4 rounded-lg border border-purple-200 bg-purple-50">
+                      <div className="p-3 sm:p-4 rounded-lg border border-blue-200 bg-blue-50">
                         <h5 className="font-medium text-gray-800 text-sm sm:text-base mb-2">Client Reference Doc</h5>
                         {project.clientReferenceDocuments && project.clientReferenceDocuments.length > 0 ? (
                           <div className="space-y-2">
                             {project.clientReferenceDocuments.map((doc: any, index: number) => {
                               const normalized = normalizeDocument(doc);
                               return (
-                                <div key={doc.id || `client-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-purple-100">
-                                  <span className="text-purple-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{normalized.name}</span>
-                                  <button
-                                    onClick={() => handleDocumentClick(normalized.url, normalized.name, 'PDF', 'Client reference documentation')}
-                                    className="text-purple-600 hover:text-purple-800 hover:bg-purple-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex-shrink-0"
-                                  >
-                                    View
-                                  </button>
+                                <div key={doc.id || `client-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-blue-100 gap-2">
+                                  <span className="text-blue-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{normalized.name}</span>
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleDocumentClick(normalized.url, normalized.name, 'PDF', 'Client reference documentation')}
+                                      className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors"
+                                    >
+                                      View
+                                    </button>
+                                    {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && doc.id && (
+                                      <button
+                                        onClick={() => handleDeleteProjectDocument(doc.id, 'client_reference_documents')}
+                                        className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                        title="Delete document"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -1034,14 +1079,25 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                             {project.otherDocumentsLinks.map((doc: any, index: number) => {
                               const normalized = normalizeDocument(doc);
                               return (
-                                <div key={doc.id || `other-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-orange-100">
+                                <div key={doc.id || `other-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-orange-100 gap-2">
                                   <span className="text-orange-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{normalized.name}</span>
-                                  <button
-                                    onClick={() => handleDocumentClick(normalized.url, normalized.name, 'Multiple', 'Additional project documents')}
-                                    className="text-orange-600 hover:text-orange-800 hover:bg-orange-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex-shrink-0"
-                                  >
-                                    View
-                                  </button>
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleDocumentClick(normalized.url, normalized.name, 'Multiple', 'Additional project documents')}
+                                      className="text-orange-600 hover:text-orange-800 hover:bg-orange-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors"
+                                    >
+                                      View
+                                    </button>
+                                    {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && doc.id && (
+                                      <button
+                                        onClick={() => handleDeleteProjectDocument(doc.id, 'other_documents')}
+                                        className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                        title="Delete document"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -1077,7 +1133,7 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                     ) : (
                       <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border">
                         <p className="text-xs sm:text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                          {project.kickoffMeetingNotes || 'No kickoff meeting notes provided. Please add meeting notes and key discussion points.'}
+                          {project.kickoffMeetingNotes || ' - '}
                         </p>
                       </div>
                     )}
@@ -1097,7 +1153,7 @@ const ProjectDetails = ({ project, onBack, onViewEquipment, onViewVDCR, vdcrData
                     ) : (
                       <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border">
                         <p className="text-xs sm:text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                          {project.specialProductionNotes || 'No special production notes provided. Please add critical production requirements and specifications.'}
+                          {project.specialProductionNotes || ' - '}
                         </p>
                       </div>
                     )}

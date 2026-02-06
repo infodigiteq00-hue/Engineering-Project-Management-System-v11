@@ -113,7 +113,7 @@ const AssignManagerForm: React.FC<AssignManagerFormProps> = ({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="project_manager">Project Manager</SelectItem>
-                  <SelectItem value="vdcr_manager">VDCR Manager</SelectItem>
+                  <SelectItem value="vdcr_manager">Documentation Manager</SelectItem>
                 </SelectContent>
               </Select>
             </div>

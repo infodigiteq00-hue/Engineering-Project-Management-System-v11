@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabase";
 import { updateEquipment } from "@/lib/database";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { useNotificationReads, UnreadEntityDot, UnreadTabDot } from "@/contexts/NotificationReadsContext";
 import { logProgressEntryAdded, logProgressEntryUpdated, logProgressEntryDeleted, logDocumentUploaded, logDocumentDeleted, logProgressImageUploaded, logTeamMemberAdded } from "@/lib/activityLogger";
 import { sendProjectTeamEmailNotification, getDashboardUrl } from "@/lib/notifications";
 import { Equipment, ProgressEntry } from "@/types/equipment";
@@ -62,9 +63,11 @@ interface EquipmentGridProps {
 const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetails, onViewVDCR, onUserAdded, onActivityUpdate, onViewingDetailsChange, onSummaryChange }: EquipmentGridProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
+  const { markAsSeen } = useNotificationReads();
   const currentUserRole = localStorage.getItem('userRole') || '';
   const [imageIndices, setImageIndices] = useState<Record<string, number>>({});
   const [showAddEquipmentForm, setShowAddEquipmentForm] = useState(false);
+  const [editingStandaloneEquipment, setEditingStandaloneEquipment] = useState<Equipment | null>(null);
   const [showMiniForm, setShowMiniForm] = useState(false);
   const [miniFormData, setMiniFormData] = useState({
     equipmentName: '',
@@ -305,7 +308,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
     const roleAccess: Record<string, string[]> = {
       'firm_admin': ['Full Company Access', 'Can Edit All Data', 'Manage All Projects'],
       'project_manager': ['Full Equipment Access', 'Can Manage All Equipment', 'Can Approve VDCR', 'Can Manage Team Members', 'Access to All Tabs'],
-      'vdcr_manager': ['VDCR Management Access', 'Can Approve VDCR', 'Can View All Equipment', 'Access to VDCR & Equipment Tabs', 'No Access to Settings'],
+      'vdcr_manager': ['Documentation Management Access', 'Can Approve Documentation', 'Can View All Equipment', 'Access to Documentation & Equipment Tabs', 'No Access to Settings'],
       'design_engineer': ['Assigned Equipment Only', 'Can Add Progress Images', 'Can Add Progress Entries', 'Access to VDCR & Other Tabs', 'No Access to Settings & Project Details'],
       'quality_inspector': ['Assigned Equipment Only', 'Read-Only Access', 'Cannot Edit Data', 'Access to VDCR & Other Tabs', 'No Access to Settings & Project Details'],
       'welder': ['Assigned Equipment Only', 'Read-Only Access', 'Cannot Edit Data'],
@@ -341,7 +344,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
   const mapRoleToDisplay = (dbRole: string): string => {
     const roleMap: Record<string, string> = {
       'project_manager': 'Project Manager',
-      'vdcr_manager': 'VDCR Manager',
+      'vdcr_manager': 'Documentation Manager',
       'editor': 'Editor',
       'viewer': 'Viewer'
     };
@@ -350,11 +353,11 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
 
   const getRoleColor = (role: string) => {
     const roleColors: Record<string, string> = {
-      'project_manager': 'bg-purple-100 text-purple-800',
+      'project_manager': 'bg-blue-100 text-blue-800',
       'vdcr_manager': 'bg-teal-100 text-teal-800',
       'editor': 'bg-blue-100 text-blue-800',
       'viewer': 'bg-gray-100 text-gray-800',
-      'design_engineer': 'bg-purple-100 text-purple-800',
+      'design_engineer': 'bg-blue-100 text-blue-800',
       'quality_engineer': 'bg-green-100 text-green-800',
       'client_representative': 'bg-orange-100 text-orange-800',
       'firm_admin': 'bg-red-100 text-red-800'
@@ -400,11 +403,11 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
       name: "project_manager",
       displayName: "Project Manager",
       permissions: ["view", "edit", "delete", "manage_team", "approve_vdcr", "manage_equipment"],
-      color: "bg-purple-100 text-purple-800"
+      color: "bg-blue-100 text-blue-800"
     },
     {
       name: "vdcr_manager",
-      displayName: "VDCR Manager",
+      displayName: "Documentation Manager",
       permissions: ["view", "edit", "approve_vdcr", "manage_vdcr"],
       color: "bg-teal-100 text-teal-800"
     },
@@ -1818,6 +1821,13 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
     }
   };
 
+  const formatDateToDDMMYYYY = (dateStr: string | undefined): string => {
+    if (!dateStr || dateStr === 'Not specified') return 'Not specified';
+    const parts = String(dateStr).split('T')[0].split('-');
+    if (parts.length !== 3) return dateStr;
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
@@ -2241,6 +2251,9 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
           description: `${equipment.type === 'Distillation Column' ? 'Column' : equipment.type} ${equipment.tagNumber} deleted successfully!`,
           variant: "default"
         });
+        if (projectId === 'standalone' && viewingEquipmentId === equipment.id) {
+          setViewingEquipmentId(null);
+        }
       } catch (error) {
         console.error('❌ Error deleting equipment:', error);
         toast({
@@ -3777,7 +3790,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
   };
 
   const handleDeleteDocument = async (equipmentId: string, documentId: string) => {
-    if (confirm('Are you sure you want to delete this document?')) {
+    if (confirm('Sure you want to delete file?')) {
       try {
         // Get document info before deleting for logging
         const currentEquipment = localEquipment.find(eq => eq.id === equipmentId);
@@ -3955,7 +3968,85 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
 
   const handleAddStandaloneEquipment = async (formData: any) => {
     try {
-      const { equipmentDetails, equipmentManagerContacts, ...baseFormData } = formData;
+      const { equipmentDetails, equipmentManagerContacts, isEditMode, equipmentId, ...baseFormData } = formData;
+
+      // Edit mode: update existing standalone equipment (from details page "Edit Equipment")
+      if (isEditMode && equipmentId && equipmentDetails && Object.keys(equipmentDetails).length > 0) {
+        const firstType = Object.keys(equipmentDetails)[0];
+        const units = equipmentDetails[firstType];
+        const unit = Array.isArray(units) ? units[0] : null;
+        if (!unit) throw new Error('No equipment unit to update.');
+        const equipmentData: any = {
+          type: firstType,
+          tag_number: unit.tagNumber || '',
+          name: firstType,
+          job_number: unit.jobNumber || '',
+          manufacturing_serial: unit.manufacturingSerial || '',
+          size: unit.size || baseFormData.size || '',
+          material: unit.material || baseFormData.material || '',
+          design_code: unit.designCode || baseFormData.designCode || '',
+          client_name: baseFormData.clientName || '',
+          plant_location: baseFormData.plantLocation || '',
+          po_number: baseFormData.poNumber || '',
+          sales_order_date: baseFormData.salesOrderDate || null,
+          completion_date: baseFormData.completionDate || null,
+          client_industry: baseFormData.clientIndustry || '',
+          equipment_manager: baseFormData.equipmentManager || '',
+          consultant: baseFormData.consultant || '',
+          tpi_agency: baseFormData.tpiAgency || '',
+          client_focal_point: baseFormData.clientFocalPoint || '',
+          services_included: baseFormData.servicesIncluded || {},
+          scope_description: baseFormData.scopeDescription || '',
+          kickoff_meeting_notes: baseFormData.kickoffMeetingNotes || '',
+          special_production_notes: baseFormData.specialProductionNotes || '',
+          location: baseFormData.plantLocation || 'Not Assigned',
+          po_cdd: baseFormData.poNumber || 'To be scheduled',
+          custom_fields: [
+            { name: 'Client Name', value: baseFormData.clientName || '' },
+            { name: 'Plant Location', value: baseFormData.plantLocation || '' },
+            { name: 'PO Number', value: baseFormData.poNumber || '' },
+            { name: 'Sales Order Date', value: baseFormData.salesOrderDate || '' },
+            { name: 'Completion Date', value: baseFormData.completionDate || '' },
+            { name: 'Client Industry', value: baseFormData.clientIndustry || '' },
+            { name: 'Equipment Manager', value: baseFormData.equipmentManager || '' },
+            { name: 'Consultant', value: baseFormData.consultant || '' },
+            { name: 'TPI Agency', value: baseFormData.tpiAgency || '' },
+            { name: 'Client Focal Point', value: baseFormData.clientFocalPoint || '' },
+            { name: 'Scope Description', value: baseFormData.scopeDescription || '' },
+            { name: 'Kickoff Meeting Notes', value: baseFormData.kickoffMeetingNotes || '' },
+            { name: 'Special Production Notes', value: baseFormData.specialProductionNotes || '' }
+          ]
+        };
+        const userData = JSON.parse(localStorage.getItem('userData') || '{}');
+        await fastAPI.updateStandaloneEquipment(equipmentId, equipmentData, userData?.id);
+        // Upload any new documents added in edit mode (core & additional docs)
+        const toFileArray = (v: File | File[] | null | undefined): File[] => (!v ? [] : Array.isArray(v) ? v : [v]);
+        const uploadCoreDoc = async (file: File, documentType: string) => {
+          try {
+            const { uploadFileViaEdgeFunction } = await import('@/lib/edgeFunctions');
+            const fileName = `standalone-equipment/${equipmentId}/Core Documents/${documentType}/${Date.now()}_${file.name}`;
+            const publicUrl = await uploadFileViaEdgeFunction({ bucket: 'standalone-equipment-documents', filePath: fileName, file });
+            await uploadStandaloneEquipmentDocument(equipmentId, { name: file.name, url: publicUrl, uploadedBy: user?.id || null, size: file.size, mimeType: file.type, equipmentType: documentType });
+          } catch (err: any) {
+            console.error(`Error uploading ${documentType} (${file.name}):`, err);
+          }
+        };
+        const unpricedFiles = toFileArray(baseFormData.unpricedPOFile);
+        const designFiles = toFileArray(baseFormData.designInputsPID);
+        const clientRefFiles = toFileArray(baseFormData.clientReferenceDoc);
+        const otherFiles = toFileArray(baseFormData.otherDocuments);
+        for (const f of unpricedFiles) await uploadCoreDoc(f, 'Unpriced PO File');
+        for (const f of designFiles) await uploadCoreDoc(f, 'Design Inputs PID');
+        for (const f of clientRefFiles) await uploadCoreDoc(f, 'Client Reference Doc');
+        for (const f of otherFiles) await uploadCoreDoc(f, 'Other Documents');
+        await refreshEquipmentData(true);
+        await fetchEquipmentDocuments(equipmentId);
+        toast({ title: 'Success', description: 'Equipment updated successfully!' });
+        setShowAddEquipmentForm(false);
+        setEditingStandaloneEquipment(null);
+        return;
+      }
+
       const createdEquipmentIds: string[] = [];
       const uploadErrors: string[] = [];
       const teamErrors: string[] = [];
@@ -4135,95 +4226,93 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
           }
         };
 
+        // Helper: normalize to File[] (form may send File[] or legacy single File)
+        const toFileArray = (v: File | File[] | null | undefined): File[] => {
+          if (!v) return [];
+          return Array.isArray(v) ? v : [v];
+        };
+
         // Upload core documents to all created equipment items
         for (const equipmentId of createdEquipmentIds) {
-          // Upload Unpriced PO File
-          if (baseFormData.unpricedPOFile) {
-            await uploadCoreDocument(baseFormData.unpricedPOFile, 'Unpriced PO File', equipmentId);
+          // Upload Unpriced PO Files (multiple)
+          const unpricedPOFiles = toFileArray(baseFormData.unpricedPOFile);
+          for (const file of unpricedPOFiles) {
+            await uploadCoreDocument(file, 'Unpriced PO File', equipmentId);
           }
 
-          // Upload Design Inputs/PID
-          if (baseFormData.designInputsPID) {
-            await uploadCoreDocument(baseFormData.designInputsPID, 'Design Inputs PID', equipmentId);
+          // Upload Design Inputs/PID (multiple)
+          const designInputsFiles = toFileArray(baseFormData.designInputsPID);
+          for (const file of designInputsFiles) {
+            await uploadCoreDocument(file, 'Design Inputs PID', equipmentId);
           }
 
-          // Upload Client Reference Document
-          if (baseFormData.clientReferenceDoc) {
-            await uploadCoreDocument(baseFormData.clientReferenceDoc, 'Client Reference Doc', equipmentId);
+          // Upload Client Reference Documents (multiple)
+          const clientRefFiles = toFileArray(baseFormData.clientReferenceDoc);
+          for (const file of clientRefFiles) {
+            await uploadCoreDocument(file, 'Client Reference Doc', equipmentId);
           }
 
           // Upload Other Documents (multiple files)
-          if (baseFormData.otherDocuments && Array.isArray(baseFormData.otherDocuments) && baseFormData.otherDocuments.length > 0) {
-            for (const file of baseFormData.otherDocuments) {
-              await uploadCoreDocument(file, 'Other Documents', equipmentId);
-            }
+          const otherFiles = toFileArray(baseFormData.otherDocuments);
+          for (const file of otherFiles) {
+            await uploadCoreDocument(file, 'Other Documents', equipmentId);
           }
         }
       }
 
-      // Add Equipment Manager to standalone_equipment_team_positions table for all created equipment
+      // Resolve Equipment Manager email from contacts, firm team, or standalone_equipment_team_positions (never use @company.com)
+      const resolveEquipmentManagerEmail = async (name: string): Promise<{ email: string | null; phone: string }> => {
+        const contact = equipmentManagerContacts?.[name];
+        let phone = contact?.phone || '';
+        if (contact?.email && contact.email.includes('@') && !contact.email.toLowerCase().includes('@company')) return { email: contact.email, phone };
+        if (name.includes('@')) return { email: name, phone };
+        const firmId = localStorage.getItem('firmId');
+        if (firmId) {
+          try {
+            const members = await fastAPI.getAllFirmTeamMembers(firmId);
+            const member = (members || []).find((m: any) => m.name === name && (m.role === 'project_manager' || m.access_level === 'project_manager'));
+            if (member?.email && member.email.includes('@') && !member.email.toLowerCase().includes('@company')) {
+              return { email: member.email, phone: member?.phone || phone };
+            }
+          } catch {
+            // fall through to team_positions lookup
+          }
+        }
+        // Fallback: look up previously added equipment manager from standalone_equipment_team_positions (e.g. when selected from recommendations)
+        try {
+          const fromTeam = await fastAPI.getStandaloneEquipmentManagerContact(name);
+          if (fromTeam) return { email: fromTeam.email, phone: fromTeam.phone };
+        } catch {
+          // ignore
+        }
+        return { email: null, phone };
+      };
+
+      // Add Equipment Manager to standalone_equipment_team_positions table (only with resolved email – no @company.com)
       if (baseFormData.equipmentManager && baseFormData.equipmentManager.trim() !== '' && createdEquipmentIds.length > 0) {
         try {
-          // Get equipment manager contact info if available
           const equipmentManagerName = baseFormData.equipmentManager;
+          const { email: equipmentManagerEmail, phone: equipmentManagerPhone } = await resolveEquipmentManagerEmail(equipmentManagerName);
           
-          // 🆕 Priority: Use contact details from form if available, otherwise generate email
-          let equipmentManagerEmail = '';
-          let equipmentManagerPhone = '';
-          let equipmentManagerRole: 'editor' | 'viewer' = 'editor'; // Default to editor
-          
-          if (equipmentManagerContacts && equipmentManagerContacts[equipmentManagerName]) {
-            // Use email and phone from form
-            equipmentManagerEmail = equipmentManagerContacts[equipmentManagerName].email || '';
-            equipmentManagerPhone = equipmentManagerContacts[equipmentManagerName].phone || '';
-            
-            // 🆕 Get role from contacts if available (should be 'project_manager' for Equipment Managers)
-            // For database storage, project_manager maps to 'editor' role in standalone_equipment_team_positions
-            // But we'll store it as 'editor' since the table only accepts 'editor' or 'viewer'
-            // The actual role (project_manager) will be fetched from user record when displaying
-            if (equipmentManagerContacts[equipmentManagerName].role === 'project_manager') {
-              equipmentManagerRole = 'editor'; // Project Manager has editor-level access
-            }
-          }
-          
-          // 🆕 Try to fetch role from existing user record if email is available
-          if (equipmentManagerEmail) {
-            try {
-              const firmId = localStorage.getItem('firmId');
-              if (firmId) {
-                const allMembers = await fastAPI.getAllFirmTeamMembers(firmId);
-                const existingMember = allMembers.find((m: any) => 
-                  m.email?.toLowerCase() === equipmentManagerEmail.toLowerCase()
-                );
-                if (existingMember) {
-                  // If they're a project_manager, they should have editor access
-                  if (existingMember.role === 'project_manager' || existingMember.access_level === 'project_manager') {
-                    equipmentManagerRole = 'editor';
-                  } else if (existingMember.role === 'vdcr_manager' || existingMember.access_level === 'vdcr_manager') {
-                    equipmentManagerRole = 'editor';
-                  } else if (existingMember.role === 'editor' || existingMember.access_level === 'editor') {
-                    equipmentManagerRole = 'editor';
-                  } else {
-                    equipmentManagerRole = 'viewer';
-                  }
-                }
+          if (!equipmentManagerEmail) {
+            console.warn('⚠️ Equipment Manager email not found (skipping team add). Use the email saved when the team member was first added.');
+          } else {
+          let equipmentManagerRole: 'editor' | 'viewer' = 'editor';
+          if (equipmentManagerContacts?.[equipmentManagerName]?.role === 'project_manager') equipmentManagerRole = 'editor';
+          try {
+            const firmId = localStorage.getItem('firmId');
+            if (firmId) {
+              const allMembers = await fastAPI.getAllFirmTeamMembers(firmId);
+              const existingMember = allMembers.find((m: any) => m.email?.toLowerCase() === equipmentManagerEmail.toLowerCase());
+              if (existingMember) {
+                if (existingMember.role === 'project_manager' || existingMember.access_level === 'project_manager') equipmentManagerRole = 'editor';
+                else if (existingMember.role === 'vdcr_manager' || existingMember.access_level === 'vdcr_manager') equipmentManagerRole = 'editor';
+                else if (existingMember.role === 'editor' || existingMember.access_level === 'editor') equipmentManagerRole = 'editor';
+                else equipmentManagerRole = 'viewer';
               }
-            } catch (error) {
-              console.error('Error fetching user role (non-fatal):', error);
-              // Continue with default role
             }
-          }
-          
-          // Fallback: Generate email if not provided in form
-          if (!equipmentManagerEmail || equipmentManagerEmail.trim() === '') {
-            equipmentManagerEmail = equipmentManagerName.includes('@') 
-              ? equipmentManagerName 
-              : `${equipmentManagerName.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-          }
-          
-          // Ensure email is valid
-          if (!equipmentManagerEmail || !equipmentManagerEmail.includes('@')) {
-            equipmentManagerEmail = `${equipmentManagerName.replace(/\s+/g, '.').toLowerCase()}@company.com`;
+          } catch (error) {
+            console.error('Error fetching user role (non-fatal):', error);
           }
           
           // Add equipment manager to each created equipment
@@ -4375,17 +4464,15 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
           // Notify parent component to refresh Settings tab (similar to project add form)
           if (onUserAdded) {
             try {
-              // console.log('🔄 Calling onUserAdded callback to refresh Settings tab...');
               onUserAdded();
             } catch (callbackError) {
               console.error('❌ Error in onUserAdded callback (non-fatal):', callbackError);
-              // Don't throw - this is just a refresh callback
             }
+          }
           }
         } catch (teamError: any) {
           console.error('❌ Error adding Equipment Manager to team (equipment still created):', teamError);
           teamErrors.push(`Failed to add Equipment Manager: ${teamError?.message || 'Unknown error'}`);
-          // Don't throw error - equipment was created successfully, team member addition failed
         }
       }
 
@@ -4475,78 +4562,70 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
       // 🆕 Send email invitation to Equipment Manager (only for standalone equipment)
       // 🔧 FIX: Wrap in try-catch and add timeout to prevent hanging
       try {
-        if (baseFormData.equipmentManager && equipmentManagerContacts) {
+        if (baseFormData.equipmentManager && baseFormData.equipmentManager.trim() !== '') {
           const equipmentManagerName = baseFormData.equipmentManager;
-          const equipmentManagerContact = equipmentManagerContacts[equipmentManagerName];
-          
-          if (equipmentManagerContact && equipmentManagerContact.email && equipmentManagerContact.email.trim()) {
+          const { email: equipmentManagerEmail } = await resolveEquipmentManagerEmail(equipmentManagerName);
+          if (equipmentManagerEmail) {
             const firmId = localStorage.getItem('firmId');
             const currentUserId = user?.id || localStorage.getItem('userId');
             const companyName = localStorage.getItem('companyName') || 'Your Company';
-            
-            // Get equipment name for email (use first created equipment or form data)
-            const equipmentName = createdEquipmentIds.length > 0 
-              ? `Equipment ${createdEquipmentIds[0]}` 
-              : (baseFormData.equipmentType || 'Standalone Equipment');
-            
-            // Send email notification with timeout
+            const equipmentName = createdEquipmentIds.length > 0 ? `Equipment ${createdEquipmentIds[0]}` : (baseFormData.equipmentType || 'Standalone Equipment');
             try {
               const emailPromise = sendProjectTeamEmailNotification({
                 project_name: equipmentName,
                 team_member_name: equipmentManagerName,
-                team_member_email: equipmentManagerContact.email.trim(),
+                team_member_email: equipmentManagerEmail,
                 role: 'Equipment Manager',
                 company_name: companyName,
                 dashboard_url: getDashboardUrl('editor'),
                 equipment_name: equipmentName
               });
-              const emailTimeout = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email timeout')), 5000) // 5 second timeout
-              );
-              
-              const emailResult = await Promise.race([emailPromise, emailTimeout]).catch(() => ({ success: false, message: 'Timeout' }));
-              
-              if (emailResult.success) {
-                // console.log('✅ Email invitation sent to Equipment Manager');
-              } else {
-                // console.log('⚠️ Email invitation failed:', emailResult.message);
-              }
+              const emailTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Email timeout')), 5000));
+              await Promise.race([emailPromise, emailTimeout]).catch(() => ({ success: false, message: 'Timeout' }));
             } catch (emailError) {
               console.error('❌ Error sending email invitation (non-fatal):', emailError);
-              // Don't fail the whole operation if email fails
             }
-            
-            // 🆕 Create invite for Equipment Manager with timeout
-            try {
-              const invitePromise = fastAPI.createInvite({
-                email: equipmentManagerContact.email.trim(),
-                full_name: equipmentManagerName,
-                role: 'project_manager', // Equipment Manager gets editor role
-                firm_id: firmId || '',
-                project_id: null, // No project_id for standalone equipment
-                invited_by: currentUserId || 'system'
-              });
-              const inviteTimeout = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Invite timeout')), 5000) // 5 second timeout
-              );
-              
-              await Promise.race([invitePromise, inviteTimeout]).catch((error) => {
-                if (error.message !== 'Invite timeout') throw error;
-                console.warn('⚠️ Invite creation timed out (non-fatal)');
-              });
-              // console.log('✅ Invite created for Equipment Manager');
-            } catch (inviteError) {
-              console.error('❌ Error creating invite (equipment still created):', inviteError);
-              // Don't fail the whole operation if invite creation fails
+            if (firmId) {
+              try {
+                const invitePromise = fastAPI.createInvite({
+                  email: equipmentManagerEmail,
+                  full_name: equipmentManagerName,
+                  role: 'project_manager',
+                  firm_id: firmId,
+                  project_id: null,
+                  invited_by: currentUserId || 'system'
+                });
+                const inviteTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Invite timeout')), 5000));
+                await Promise.race([invitePromise, inviteTimeout]).catch((error) => {
+                  if (error.message !== 'Invite timeout') throw error;
+                  console.warn('⚠️ Invite creation timed out (non-fatal)');
+                });
+              } catch (inviteError) {
+                console.error('❌ Error creating invite (equipment still created):', inviteError);
+              }
             }
+          } else {
+            console.warn('⚠️ Equipment Manager email not found (skipping notification). Use the email saved when the team member was first added.');
           }
         }
       } catch (emailInviteError) {
         console.error('❌ Error in email/invite operations (non-fatal):', emailInviteError);
-        // Don't fail the whole operation
       }
       
       // console.log('✅ All operations completed');
+      
+      // Refresh the equipment list so the new equipment appears, then load documents for each
+      // new equipment so the Docs tab shows Step 1 uploads (standalone only; project flow untouched)
+      if (projectId === 'standalone' && createdEquipmentIds.length > 0) {
+        try {
+          await refreshEquipmentData(true);
+          for (const equipmentId of createdEquipmentIds) {
+            await fetchEquipmentDocuments(equipmentId);
+          }
+        } catch (refreshErr) {
+          console.warn('⚠️ Post-create refresh failed (non-fatal):', refreshErr);
+        }
+      }
       
       // Report any errors that occurred during document/team operations (non-blocking)
       if (uploadErrors.length > 0 || teamErrors.length > 0) {
@@ -4879,7 +4958,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
         
         const roleMapping: Record<string, string> = {
           'Project Manager': 'project_manager', 
-          'VDCR Manager': 'vdcr_manager', 
+          'Documentation Manager': 'vdcr_manager', 
           'Editor': 'editor',
           'Viewer': 'viewer'
         };
@@ -5076,7 +5155,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
     
     const roleDisplayMapping: Record<string, string> = {
       'project_manager': 'Project Manager',
-      'vdcr_manager': 'VDCR Manager', 
+      'vdcr_manager': 'Documentation Manager', 
       'editor': 'Editor',
       'viewer': 'Viewer'
     };
@@ -5129,7 +5208,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
         
         const roleMapping: Record<string, string> = {
           'Project Manager': 'project_manager',
-          'VDCR Manager': 'vdcr_manager', 
+          'Documentation Manager': 'vdcr_manager', 
           'Editor': 'editor',
           'Viewer': 'viewer'
         };
@@ -5242,18 +5321,20 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
           </div>
 
           {/* Main Overview Card - Common for All Tabs */}
-          <div className="mb-4 sm:mb-6 bg-gradient-to-r from-purple-50 via-indigo-50 to-purple-50 rounded-2xl p-4 sm:p-6 lg:p-8 border border-purple-100 shadow-lg">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
-              <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0">
-                <Wrench size={20} className="text-white sm:w-6 sm:h-6 lg:w-8 lg:h-8" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h1 className="text-xl sm:text-2xl lg:text-4xl font-bold bg-gradient-to-r from-purple-600 to-purple-600 bg-clip-text text-transparent mb-1 sm:mb-2 break-words">
-                  Standalone Equipment Details
-                </h1>
-                <p className="text-sm sm:text-base lg:text-xl text-gray-600 font-medium break-words">
-                  {viewingEquipment.type || viewingEquipment.name || 'Equipment'} - Equipment Management & Tracking
-                </p>
+          <div className="mb-4 sm:mb-6 bg-gradient-to-r from-blue-50 via-blue-100 to-blue-50 rounded-2xl p-4 sm:p-6 lg:p-8 border border-blue-100 shadow-lg">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-4 sm:mb-6 space-y-4 lg:space-y-0">
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0">
+                  <Wrench size={20} className="text-white sm:w-6 sm:h-6 lg:w-8 lg:h-8" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h1 className="text-xl sm:text-2xl lg:text-4xl font-bold bg-gradient-to-r from-blue-600 to-blue-700 bg-clip-text text-transparent mb-1 sm:mb-2 break-words">
+                    {viewingEquipment.type || viewingEquipment.name || 'Standalone Equipment'}
+                  </h1>
+                  <p className="text-sm sm:text-base lg:text-xl text-gray-600 font-medium break-words">
+                    Team & Equipment Information
+                  </p>
+                </div>
               </div>
             </div>
             
@@ -5262,12 +5343,12 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
               <div className="bg-white/70 backdrop-blur-sm rounded-xl p-3 sm:p-4 border border-white/50">
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs sm:text-sm font-medium text-purple-600 mb-1">Equipment Status</p>
+                    <p className="text-xs sm:text-sm font-medium text-blue-600 mb-1">Equipment Status</p>
                     <div className="flex items-center gap-2">
-                      <div className="text-lg sm:text-xl lg:text-2xl font-bold text-purple-800 capitalize truncate">{viewingEquipment.status || 'Active'}</div>
+                      <div className="text-lg sm:text-xl lg:text-2xl font-bold text-blue-800 capitalize truncate">{viewingEquipment.status || 'Active'}</div>
                     </div>
                   </div>
-                  <Target size={20} className="text-purple-500 flex-shrink-0 sm:w-6 sm:h-6" />
+                  <Target size={20} className="text-blue-500 flex-shrink-0 sm:w-6 sm:h-6" />
                 </div>
               </div>
               
@@ -5321,10 +5402,10 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                 
                 <TabsTrigger 
                   value="equipment-logs" 
-                  className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-purple-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-purple-600 data-[state=active]:hover:to-purple-700 flex-shrink-0"
+                  className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-blue-600 data-[state=active]:hover:to-blue-700 flex-shrink-0"
                 >
-                  <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
-                    <FileText size={20} className="text-purple-600 data-[state=active]:text-white" />
+                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
+                    <FileText size={20} className="text-blue-600 data-[state=active]:text-white" />
                   </div>
                   <span>Equipment Logs</span>
                 </TabsTrigger>
@@ -5346,12 +5427,45 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
             {/* Equipment Details Tab */}
             <TabsContent value="equipment-details" className="space-y-6 mt-8">
               <div className="bg-white rounded-2xl shadow-lg border-2 border-gray-200 overflow-hidden">
-                <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-6 py-4 border-b border-blue-200">
-                  <h2 className="text-xl font-semibold text-blue-800 flex items-center gap-2">
-                    <Building size={24} className="text-blue-600" />
-                    Equipment Information
-                  </h2>
-                  <p className="text-blue-600 text-sm mt-1">View and manage equipment details</p>
+                <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-6 py-4 border-b border-blue-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-semibold text-blue-800 flex items-center gap-2">
+                      <Building size={24} className="text-blue-600" />
+                      Equipment Information
+                    </h2>
+                    <p className="text-blue-600 text-sm mt-1">View and manage equipment details</p>
+                  </div>
+                  {/* Action Buttons - same row as Equipment Information header; compact on mobile */}
+                  {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && (
+                    <div className="flex flex-wrap items-center justify-end sm:justify-end gap-2 flex-shrink-0 w-full sm:w-auto">
+                      <Button
+                        onClick={() => { setEditingStandaloneEquipment(viewingEquipment); setShowAddEquipmentForm(true); }}
+                        variant="outline"
+                        className="flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 hover:text-blue-800 text-xs sm:text-sm min-w-0 flex-1 sm:flex-initial"
+                      >
+                        <Edit size={14} className="flex-shrink-0 sm:w-4 sm:h-4" />
+                        <span>Edit</span>
+                      </Button>
+                      {viewingEquipment.status !== 'completed' && (
+                        <Button
+                          onClick={() => handleMarkComplete(viewingEquipment)}
+                          variant="outline"
+                          className="flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-green-50 hover:bg-green-100 border-green-200 text-green-700 hover:text-green-800 text-xs sm:text-sm min-w-0 flex-1 sm:flex-initial"
+                        >
+                          <Check size={14} className="flex-shrink-0 sm:w-4 sm:h-4" />
+                          <span>Complete</span>
+                        </Button>
+                      )}
+                      <Button
+                        onClick={() => handleDeleteEquipment(viewingEquipment)}
+                        variant="outline"
+                        className="flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-red-50 hover:bg-red-100 border-red-200 text-red-700 hover:text-red-800 text-xs sm:text-sm min-w-0 flex-1 sm:flex-initial"
+                      >
+                        <Trash2 size={14} className="flex-shrink-0 sm:w-4 sm:h-4" />
+                        <span>Delete</span>
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="p-6">
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
@@ -5446,23 +5560,13 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-2 sm:py-3 border-b border-gray-100">
                           <span className="text-xs sm:text-sm font-medium text-gray-600 mb-1 sm:mb-0">Sales Order Date</span>
                           <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">
-                            {(() => {
-                              const salesOrderDate = viewingEquipment.salesOrderDate || (viewingEquipment.custom_fields?.find((f: any) => f.name === 'Sales Order Date')?.value) || '';
-                              if (!salesOrderDate || salesOrderDate === 'Not specified') return 'Not specified';
-                              // Remove time portion if present (format: YYYY-MM-DDTHH:mm:ss...)
-                              return salesOrderDate.split('T')[0];
-                            })()}
+                            {formatDateToDDMMYYYY(viewingEquipment.salesOrderDate || (viewingEquipment.custom_fields?.find((f: any) => f.name === 'Sales Order Date')?.value) || '')}
                           </span>
                         </div>
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-2 sm:py-3">
                           <span className="text-xs sm:text-sm font-medium text-gray-600 mb-1 sm:mb-0">Completion Date</span>
                           <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">
-                            {(() => {
-                              const completionDate = viewingEquipment.completionDate || (viewingEquipment.custom_fields?.find((f: any) => f.name === 'Completion Date')?.value) || '';
-                              if (!completionDate || completionDate === 'Not specified') return 'Not specified';
-                              // Remove time portion if present (format: YYYY-MM-DDTHH:mm:ss...)
-                              return completionDate.split('T')[0];
-                            })()}
+                            {formatDateToDDMMYYYY(viewingEquipment.completionDate || (viewingEquipment.custom_fields?.find((f: any) => f.name === 'Completion Date')?.value) || '')}
                           </span>
                         </div>
                       </div>
@@ -5582,7 +5686,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                         <h4 className="text-base sm:text-lg font-semibold text-gray-700 mb-3 sm:mb-4">Scope Description</h4>
                         <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border">
                           <p className="text-xs sm:text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                            {viewingEquipment.scopeDescription || viewingEquipment.custom_fields?.find((f: any) => f.name === 'Scope Description')?.value || 'No scope description provided. Please add detailed scope information for this equipment.'}
+                            {viewingEquipment.scopeDescription || viewingEquipment.custom_fields?.find((f: any) => f.name === 'Scope Description')?.value || ' - '}
                           </p>
                         </div>
                       </div>
@@ -5604,208 +5708,162 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                         <div className="space-y-3 sm:space-y-4">
                           <h4 className="text-base sm:text-lg font-semibold text-gray-700 mb-2 sm:mb-3">Core Documents</h4>
 
-                          {/* Unpriced PO File */}
-                          {(() => {
-                            const unpricedPODoc = documents[viewingEquipmentId]?.find((doc: any) => doc.document_type === 'Unpriced PO File');
-                            const hasUnpricedPO = !!unpricedPODoc;
-                            return (
-                              <div className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 ${hasUnpricedPO
-                                  ? 'border-emerald-200 bg-emerald-25 hover:bg-emerald-50 shadow-sm'
-                                  : 'border-gray-200 bg-gray-50'
-                                }`}>
-                                <div className="flex items-center gap-2 sm:gap-3">
-                                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center ${hasUnpricedPO ? 'bg-emerald-100' : 'bg-gray-100'
-                                    }`}>
-                                    {hasUnpricedPO ? (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                      </svg>
-                                    ) : (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                      </svg>
-                                    )}
+                          {/* Unpriced PO File - list each doc separately */}
+                          <div className="p-3 sm:p-4 rounded-lg border border-emerald-200 bg-emerald-25">
+                            <h5 className="font-medium text-gray-800 text-sm sm:text-base mb-2">Unpriced PO File</h5>
+                            {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Unpriced PO File') || []).length > 0 ? (
+                              <div className="space-y-2">
+                                {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Unpriced PO File') || []).map((doc: any, index: number) => (
+                                  <div key={doc.id || `unpriced-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-emerald-100 gap-2">
+                                    <span className="text-emerald-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{doc.document_name || doc.name}</span>
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => setDocumentUrlModal({
+                                          url: doc.document_url,
+                                          name: doc.document_name || doc.name,
+                                          uploadedBy: doc.uploadedBy,
+                                          uploadDate: doc.uploadDate
+                                        })}
+                                        className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex items-center gap-1"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" /> View
+                                      </button>
+                                      {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && (
+                                        <button
+                                          onClick={() => handleDeleteDocument(viewingEquipmentId!, doc.id)}
+                                          className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                          title="Delete document"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-medium text-gray-800 text-sm sm:text-base">Unpriced PO File</h4>
-                                    <p className={`text-xs sm:text-sm ${hasUnpricedPO ? 'text-emerald-600' : 'text-gray-500'
-                                      }`}>
-                                      {hasUnpricedPO ? 'File uploaded • Click to view' : 'No file uploaded'}
-                                    </p>
-                                  </div>
-                                  {hasUnpricedPO && (
-                                    <button
-                                      onClick={() => setDocumentUrlModal({
-                                        url: unpricedPODoc.document_url,
-                                        name: unpricedPODoc.document_name || unpricedPODoc.name,
-                                        uploadedBy: unpricedPODoc.uploadedBy,
-                                        uploadDate: unpricedPODoc.uploadDate
-                                      })}
-                                      className="p-1.5 hover:bg-emerald-100 rounded-md text-emerald-600 transition-colors"
-                                      title="View document"
-                                    >
-                                      <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
-                                    </button>
-                                  )}
-                                </div>
+                                ))}
                               </div>
-                            );
-                          })()}
+                            ) : (
+                              <p className="text-xs sm:text-sm text-gray-500">No files uploaded</p>
+                            )}
+                          </div>
 
-                          {/* Design Inputs PID */}
-                          {(() => {
-                            const designInputsDoc = documents[viewingEquipmentId]?.find((doc: any) => doc.document_type === 'Design Inputs PID');
-                            const hasDesignInputs = !!designInputsDoc;
-                            return (
-                              <div className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 ${hasDesignInputs
-                                  ? 'border-emerald-200 bg-emerald-25 hover:bg-emerald-50 shadow-sm'
-                                  : 'border-gray-200 bg-gray-50'
-                                }`}>
-                                <div className="flex items-center gap-2 sm:gap-3">
-                                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center ${hasDesignInputs ? 'bg-emerald-100' : 'bg-gray-100'
-                                    }`}>
-                                    {hasDesignInputs ? (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                      </svg>
-                                    ) : (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                      </svg>
-                                    )}
+                          {/* Design Inputs PID - list each doc separately */}
+                          <div className="p-3 sm:p-4 rounded-lg border border-emerald-200 bg-emerald-25">
+                            <h5 className="font-medium text-gray-800 text-sm sm:text-base mb-2">Design Inputs PID</h5>
+                            {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Design Inputs PID') || []).length > 0 ? (
+                              <div className="space-y-2">
+                                {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Design Inputs PID') || []).map((doc: any, index: number) => (
+                                  <div key={doc.id || `design-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-emerald-100 gap-2">
+                                    <span className="text-emerald-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{doc.document_name || doc.name}</span>
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => setDocumentUrlModal({
+                                          url: doc.document_url,
+                                          name: doc.document_name || doc.name,
+                                          uploadedBy: doc.uploadedBy,
+                                          uploadDate: doc.uploadDate
+                                        })}
+                                        className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex items-center gap-1"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" /> View
+                                      </button>
+                                      {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && (
+                                        <button
+                                          onClick={() => handleDeleteDocument(viewingEquipmentId!, doc.id)}
+                                          className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                          title="Delete document"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-medium text-gray-800 text-sm sm:text-base">Design Inputs PID</h4>
-                                    <p className={`text-xs sm:text-sm ${hasDesignInputs ? 'text-emerald-600' : 'text-gray-500'
-                                      }`}>
-                                      {hasDesignInputs ? 'File uploaded • Click to view' : 'No file uploaded'}
-                                    </p>
-                                  </div>
-                                  {hasDesignInputs && (
-                                    <button
-                                      onClick={() => setDocumentUrlModal({
-                                        url: designInputsDoc.document_url,
-                                        name: designInputsDoc.document_name || designInputsDoc.name,
-                                        uploadedBy: designInputsDoc.uploadedBy,
-                                        uploadDate: designInputsDoc.uploadDate
-                                      })}
-                                      className="p-1.5 hover:bg-emerald-100 rounded-md text-emerald-600 transition-colors"
-                                      title="View document"
-                                    >
-                                      <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
-                                    </button>
-                                  )}
-                                </div>
+                                ))}
                               </div>
-                            );
-                          })()}
+                            ) : (
+                              <p className="text-xs sm:text-sm text-gray-500">No file uploaded</p>
+                            )}
+                          </div>
                         </div>
 
                         {/* Right Column - Additional Documents */}
                         <div className="space-y-3 sm:space-y-4">
                           <h4 className="text-base sm:text-lg font-semibold text-gray-700 mb-2 sm:mb-3">Additional Documents</h4>
 
-                          {/* Client Reference Doc */}
-                          {(() => {
-                            const clientRefDoc = documents[viewingEquipmentId]?.find((doc: any) => doc.document_type === 'Client Reference Doc');
-                            const hasClientRef = !!clientRefDoc;
-                            return (
-                              <div className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 ${hasClientRef
-                                  ? 'border-emerald-200 bg-emerald-25 hover:bg-emerald-50 shadow-sm'
-                                  : 'border-gray-200 bg-gray-50'
-                                }`}>
-                                <div className="flex items-center gap-2 sm:gap-3">
-                                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center ${hasClientRef ? 'bg-emerald-100' : 'bg-gray-100'
-                                    }`}>
-                                    {hasClientRef ? (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                      </svg>
-                                    ) : (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                      </svg>
-                                    )}
+                          {/* Client Reference Doc - list each doc separately */}
+                          <div className="p-3 sm:p-4 rounded-lg border border-emerald-200 bg-emerald-25">
+                            <h5 className="font-medium text-gray-800 text-sm sm:text-base mb-2">Client Reference Doc</h5>
+                            {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Client Reference Doc') || []).length > 0 ? (
+                              <div className="space-y-2">
+                                {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Client Reference Doc') || []).map((doc: any, index: number) => (
+                                  <div key={doc.id || `client-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-emerald-100 gap-2">
+                                    <span className="text-emerald-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{doc.document_name || doc.name}</span>
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => setDocumentUrlModal({
+                                          url: doc.document_url,
+                                          name: doc.document_name || doc.name,
+                                          uploadedBy: doc.uploadedBy,
+                                          uploadDate: doc.uploadDate
+                                        })}
+                                        className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex items-center gap-1"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" /> View
+                                      </button>
+                                      {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && (
+                                        <button
+                                          onClick={() => handleDeleteDocument(viewingEquipmentId!, doc.id)}
+                                          className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                          title="Delete document"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-medium text-gray-800 text-sm sm:text-base">Client Reference Doc</h4>
-                                    <p className={`text-xs sm:text-sm ${hasClientRef ? 'text-emerald-600' : 'text-gray-500'
-                                      }`}>
-                                      {hasClientRef ? 'File uploaded • Click to view' : 'No file uploaded'}
-                                    </p>
-                                  </div>
-                                  {hasClientRef && (
-                                    <button
-                                      onClick={() => setDocumentUrlModal({
-                                        url: clientRefDoc.document_url,
-                                        name: clientRefDoc.document_name || clientRefDoc.name,
-                                        uploadedBy: clientRefDoc.uploadedBy,
-                                        uploadDate: clientRefDoc.uploadDate
-                                      })}
-                                      className="p-1.5 hover:bg-emerald-100 rounded-md text-emerald-600 transition-colors"
-                                      title="View document"
-                                    >
-                                      <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
-                                    </button>
-                                  )}
-                                </div>
+                                ))}
                               </div>
-                            );
-                          })()}
+                            ) : (
+                              <p className="text-xs sm:text-sm text-gray-500">No file uploaded</p>
+                            )}
+                          </div>
 
-                          {/* Other Documents */}
-                          {(() => {
-                            const otherDocs = documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Other Documents') || [];
-                            const hasOtherDocs = otherDocs.length > 0;
-                            return (
-                              <div className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 ${hasOtherDocs
-                                  ? 'border-emerald-200 bg-emerald-25 hover:bg-emerald-50 shadow-sm'
-                                  : 'border-gray-200 bg-gray-50'
-                                }`}>
-                                <div className="flex items-center gap-2 sm:gap-3">
-                                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center ${hasOtherDocs ? 'bg-emerald-100' : 'bg-gray-100'
-                                    }`}>
-                                    {hasOtherDocs ? (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                      </svg>
-                                    ) : (
-                                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                      </svg>
-                                    )}
+                          {/* Other Documents - list each doc separately */}
+                          <div className="p-3 sm:p-4 rounded-lg border border-emerald-200 bg-emerald-25">
+                            <h5 className="font-medium text-gray-800 text-sm sm:text-base mb-2">Other Documents</h5>
+                            {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Other Documents') || []).length > 0 ? (
+                              <div className="space-y-2">
+                                {(documents[viewingEquipmentId]?.filter((doc: any) => doc.document_type === 'Other Documents') || []).map((doc: any, index: number) => (
+                                  <div key={doc.id || `other-${index}`} className="flex items-center justify-between p-2 bg-white rounded border border-emerald-100 gap-2">
+                                    <span className="text-emerald-700 truncate flex-1 min-w-0 text-xs sm:text-sm">{doc.document_name || doc.name}</span>
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => setDocumentUrlModal({
+                                          url: doc.document_url,
+                                          name: doc.document_name || doc.name,
+                                          uploadedBy: doc.uploadedBy,
+                                          uploadDate: doc.uploadDate
+                                        })}
+                                        className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-1 rounded text-xs sm:text-sm transition-colors flex items-center gap-1"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" /> View
+                                      </button>
+                                      {currentUserRole !== 'vdcr_manager' && currentUserRole !== 'editor' && currentUserRole !== 'viewer' && (
+                                        <button
+                                          onClick={() => handleDeleteDocument(viewingEquipmentId!, doc.id)}
+                                          className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                          title="Delete document"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-medium text-gray-800 text-sm sm:text-base">Other Documents</h4>
-                                    <p className={`text-xs sm:text-sm ${hasOtherDocs ? 'text-emerald-600' : 'text-gray-500'
-                                      }`}>
-                                      {hasOtherDocs
-                                        ? `${otherDocs.length} file(s) uploaded • Click to view`
-                                        : 'No files uploaded'
-                                      }
-                                    </p>
-                                  </div>
-                                  {hasOtherDocs && (
-                                    <button
-                                      onClick={() => {
-                                        // Open first document in modal
-                                        setDocumentUrlModal({
-                                          url: otherDocs[0].document_url,
-                                          name: otherDocs[0].document_name || otherDocs[0].name,
-                                          uploadedBy: otherDocs[0].uploadedBy,
-                                          uploadDate: otherDocs[0].uploadDate
-                                        });
-                                      }}
-                                      className="p-1.5 hover:bg-emerald-100 rounded-md text-emerald-600 transition-colors"
-                                      title="View documents"
-                                    >
-                                      <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
-                                    </button>
-                                  )}
-                                </div>
+                                ))}
                               </div>
-                            );
-                          })()}
+                            ) : (
+                              <p className="text-xs sm:text-sm text-gray-500">No files uploaded</p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -5824,7 +5882,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                         <h4 className="text-base sm:text-lg font-semibold text-gray-700 mb-2 sm:mb-3">Kickoff Meeting Notes</h4>
                         <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border">
                           <p className="text-xs sm:text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                            {viewingEquipment.kickoffMeetingNotes || viewingEquipment.custom_fields?.find((f: any) => f.name === 'Kickoff Meeting Notes')?.value || 'No kickoff meeting notes provided. Please add meeting notes and key discussion points.'}
+                            {viewingEquipment.kickoffMeetingNotes || viewingEquipment.custom_fields?.find((f: any) => f.name === 'Kickoff Meeting Notes')?.value || ' - '}
                           </p>
                         </div>
                       </div>
@@ -5834,7 +5892,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                         <h4 className="text-base sm:text-lg font-semibold text-gray-700 mb-2 sm:mb-3">Special Production Notes</h4>
                         <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border">
                           <p className="text-xs sm:text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                            {viewingEquipment.specialProductionNotes || viewingEquipment.custom_fields?.find((f: any) => f.name === 'Special Production Notes')?.value || 'No special production notes provided. Please add critical production requirements and specifications.'}
+                            {viewingEquipment.specialProductionNotes || viewingEquipment.custom_fields?.find((f: any) => f.name === 'Special Production Notes')?.value || ' - '}
                           </p>
                         </div>
                       </div>
@@ -5847,25 +5905,25 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
             {/* Equipment Logs Tab */}
             <TabsContent value="equipment-logs" className="space-y-4 sm:space-y-6 mt-6 sm:mt-8">
               <div className="bg-white rounded-2xl shadow-lg border-2 border-gray-200 overflow-hidden">
-                <div className="bg-gradient-to-r from-purple-50 to-purple-100 px-4 sm:px-6 py-3 sm:py-4 border-b border-purple-200">
-                  <h2 className="text-lg sm:text-xl font-semibold text-purple-800 flex items-center gap-2">
-                    <TrendingUp size={20} className="text-purple-600 sm:w-6 sm:h-6" />
+                <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-4 sm:px-6 py-3 sm:py-4 border-b border-blue-200">
+                  <h2 className="text-lg sm:text-xl font-semibold text-blue-800 flex items-center gap-2">
+                    <TrendingUp size={20} className="text-blue-600 sm:w-6 sm:h-6" />
                     Equipment Logs
                   </h2>
-                  <p className="text-purple-600 text-xs sm:text-sm mt-1">Track equipment progress updates and milestones</p>
+                  <p className="text-blue-600 text-xs sm:text-sm mt-1">Track equipment progress updates and milestones</p>
                 </div>
                 <div className="p-4 sm:p-6">
                   <div className="space-y-4 sm:space-y-6">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <h3 className="text-base sm:text-xl font-semibold text-gray-800 flex items-center gap-2">
-                        <Building size={18} className="text-purple-600 sm:w-5 sm:h-5" />
+                        <Building size={18} className="text-blue-600 sm:w-5 sm:h-5" />
                         Equipment Activity Log
                       </h3>
                       <Button
                         onClick={exportEquipmentLogsToExcel}
                         variant="outline"
                         size="sm"
-                        className="flex items-center gap-1 sm:gap-2 bg-white hover:bg-purple-50 border-purple-200 text-purple-700 hover:text-purple-800 hover:border-purple-300 transition-all duration-200 text-xs sm:text-sm px-3"
+                        className="flex items-center gap-1 sm:gap-2 bg-white hover:bg-blue-50 border-blue-200 text-blue-700 hover:text-blue-800 hover:border-blue-300 transition-all duration-200 text-xs sm:text-sm px-3"
                       >
                         <Download size={14} className="sm:w-4 sm:h-4" />
                         <span className="hidden sm:inline">Export to Excel</span>
@@ -5880,7 +5938,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                         placeholder="Search equipment logs by unit, status, or user..."
                         value={equipmentSearchQuery}
                         onChange={(e) => setEquipmentSearchQuery(e.target.value)}
-                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pl-9 sm:pl-10 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200"
+                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pl-9 sm:pl-10 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                       />
                       <div className="absolute inset-y-0 left-0 pl-2.5 sm:pl-3 flex items-center pointer-events-none">
                         <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6163,7 +6221,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                             'equipment_created': { label: 'Created', color: 'text-green-800', bgColor: 'bg-green-100', borderColor: 'border-green-200', icon: Building },
                             'equipment_updated': { label: 'Updated', color: 'text-blue-800', bgColor: 'bg-blue-100', borderColor: 'border-blue-200', icon: Wrench },
                             'equipment_deleted': { label: 'Deleted', color: 'text-red-800', bgColor: 'bg-red-100', borderColor: 'border-red-200', icon: AlertTriangle },
-                            'progress_image_uploaded': { label: 'Progress Image', color: 'text-purple-800', bgColor: 'bg-purple-100', borderColor: 'border-purple-200', icon: Image },
+                            'progress_image_uploaded': { label: 'Progress Image', color: 'text-blue-800', bgColor: 'bg-blue-100', borderColor: 'border-blue-200', icon: Image },
                             'technical_specs_updated': { label: 'Technical Specs', color: 'text-orange-800', bgColor: 'bg-orange-100', borderColor: 'border-orange-200', icon: Wrench },
                             'technical_section_added': { label: 'Tech Section Added', color: 'text-orange-800', bgColor: 'bg-orange-100', borderColor: 'border-orange-200', icon: Wrench },
                             'document_uploaded': { label: 'Document Added', color: 'text-indigo-800', bgColor: 'bg-indigo-100', borderColor: 'border-indigo-200', icon: FileCheck },
@@ -6230,7 +6288,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                           return (
                             <div className="h-full flex items-center justify-center text-gray-500">
                               <div className="text-center">
-                              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-2"></div>
+                              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
                               <p>Loading equipment logs...</p>
                               </div>
                             </div>
@@ -6309,7 +6367,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                                     {/* Progress Image Added */}
                                     {log.activityType === 'progress_image_uploaded' && (
                                       <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 text-[10px] sm:text-xs md:text-sm text-gray-700 flex-wrap">
-                                        <Image size={12} className="sm:w-[14px] sm:h-[14px] text-purple-600 flex-shrink-0" />
+                                        <Image size={12} className="sm:w-[14px] sm:h-[14px] text-blue-600 flex-shrink-0" />
                                         <span className="flex-shrink-0">New progress image added</span>
                                         {log.metadata?.imageDescription && (
                                           <span className="text-gray-500 truncate">- {log.metadata.imageDescription}</span>
@@ -6536,23 +6594,23 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                                 {member.role === 'project_manager' && (
                                   <>
                                     <div className="flex items-center gap-2">
-                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                       <span className="text-xs text-gray-600">Full Equipment Access</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                       <span className="text-xs text-gray-600">Can Manage All Equipment</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                       <span className="text-xs text-gray-600">Can Approve VDCR</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                       <span className="text-xs text-gray-600">Can Manage Team Members</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                       <span className="text-xs text-gray-600">Access to All Tabs</span>
                                     </div>
                                   </>
@@ -6561,7 +6619,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                                   <>
                                     <div className="flex items-center gap-2">
                                       <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
-                                      <span className="text-xs text-gray-600">VDCR Management Access</span>
+                                      <span className="text-xs text-gray-600">Documentation Management Access</span>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
@@ -6847,7 +6905,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                   {/* Role & Access Section */}
                   <div className="space-y-3 sm:space-y-4">
                     <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
-                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full flex-shrink-0"></div>
+                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full flex-shrink-0"></div>
                       <h4 className="text-xs sm:text-sm font-semibold text-gray-800 uppercase tracking-wide">Role & Access Level</h4>
                     </div>
                     
@@ -6861,17 +6919,17 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                             ...newMember, 
                             role: role,
                             accessLevel: role === 'Project Manager' ? 'project_manager' : 
-                                        role === 'VDCR Manager' ? 'vdcr_manager' : 
+                                        role === 'Documentation Manager' ? 'vdcr_manager' : 
                                         role === 'Editor' ? 'editor' : 'viewer',
                             permissions: role === 'Project Manager' ? ['view', 'edit', 'delete', 'manage_team', 'approve_vdcr', 'manage_equipment'] :
-                                       role === 'VDCR Manager' ? ['view', 'edit', 'approve_vdcr', 'manage_vdcr'] :
+                                       role === 'Documentation Manager' ? ['view', 'edit', 'approve_vdcr', 'manage_vdcr'] :
                                        role === 'Editor' ? ['view', 'edit', 'manage_equipment'] : ['view', 'comment']
                           });
                         }}
                         disabled={isExistingMemberMode}
                         required
                       >
-                        <SelectTrigger className={`w-full h-auto px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200 ${
+                        <SelectTrigger className={`w-full h-auto px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
                           isExistingMemberMode 
                             ? 'bg-gray-100 cursor-not-allowed text-gray-600' 
                             : 'bg-gray-50 hover:bg-white'
@@ -6882,8 +6940,8 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                           <SelectItem value="Project Manager" className="text-xs sm:text-sm py-2">
                             Project Manager (Full Access)
                           </SelectItem>
-                          <SelectItem value="VDCR Manager" className="text-xs sm:text-sm py-2">
-                            VDCR Manager (VDCR Management)
+                          <SelectItem value="Documentation Manager" className="text-xs sm:text-sm py-2">
+                            Documentation Manager (Documentation Management)
                           </SelectItem>
                           <SelectItem value="Editor" className="text-xs sm:text-sm py-2">
                             Editor (Can Add Progress)
@@ -6896,14 +6954,14 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                       
                       {/* Role Description with Data Access */}
                       {newMember.role && (
-                        <div className="mt-3 sm:mt-4 p-3 sm:p-4 bg-purple-50 rounded-lg border border-purple-200">
-                          <p className="text-[10px] sm:text-xs text-purple-700 font-medium mb-2 sm:mb-3">Default Data Access for Selected Role:</p>
-                          <div className="text-[10px] sm:text-xs text-purple-700 space-y-1 sm:space-y-2">
+                        <div className="mt-3 sm:mt-4 p-3 sm:p-4 bg-blue-50 rounded-lg border border-blue-200">
+                          <p className="text-[10px] sm:text-xs text-blue-700 font-medium mb-2 sm:mb-3">Default Data Access for Selected Role:</p>
+                          <div className="text-[10px] sm:text-xs text-blue-700 space-y-1 sm:space-y-2">
                             {(() => {
                               // Map display role to database role
                               const roleMapping: Record<string, string> = {
                                 'Project Manager': 'project_manager',
-                                'VDCR Manager': 'vdcr_manager',
+                                'Documentation Manager': 'vdcr_manager',
                                 'Editor': 'editor',
                                 'Viewer': 'viewer'
                               };
@@ -7260,6 +7318,16 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
         </div>,
         document.body
       )}
+
+      {/* Edit Equipment modal - render inside details view so it appears on top (standalone only) */}
+      {showAddEquipmentForm && editingStandaloneEquipment && (
+        <AddStandaloneEquipmentFormNew
+          onClose={() => { setShowAddEquipmentForm(false); setEditingStandaloneEquipment(null); }}
+          onSubmit={handleAddStandaloneEquipment}
+          editData={editingStandaloneEquipment}
+          isEditMode={true}
+        />
+      )}
     </>
     );
   }
@@ -7516,7 +7584,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
             <button
               onClick={() => setSelectedPhase('testing')}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${selectedPhase === 'testing'
-                ? 'border-purple-500 text-purple-600'
+                ? 'border-blue-500 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
             >
@@ -8142,19 +8210,57 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
 
 
 
-                  <Tabs defaultValue="overview" className="w-full flex-1 flex flex-col">
+                  <Tabs
+                    defaultValue="overview"
+                    className="w-full flex-1 flex flex-col"
+                    onValueChange={(value) => markAsSeen(`equipment_${item.id}_${value}`)}
+                  >
                     <div className="overflow-x-auto overflow-y-hidden scroll-smooth -mx-1 px-1 md:mx-0 md:px-0 scrollbar-hide md:overflow-visible">
                       <TabsList className="flex md:grid md:w-full md:grid-cols-5 h-8 sm:h-9 min-w-max md:min-w-0 gap-1 md:gap-0 flex-nowrap md:flex-none justify-start md:justify-stretch">
-                        <TabsTrigger value="overview" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0">Overview</TabsTrigger>
-                        <TabsTrigger value="technical" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0">Technical</TabsTrigger>
-                        <TabsTrigger value="team" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0">Team</TabsTrigger>
-                        <TabsTrigger value="progress" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0">Updates</TabsTrigger>
+                        <TabsTrigger value="overview" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0 flex items-center justify-center gap-0.5">
+                          Overview
+                          <UnreadTabDot entityKey={`equipment_${item.id}_overview`} updatedAt={item.updated_at ?? (item as any).last_update} />
+                        </TabsTrigger>
+                        <TabsTrigger value="technical" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0 flex items-center justify-center gap-0.5">
+                          Technical
+                          <UnreadTabDot entityKey={`equipment_${item.id}_technical`} updatedAt={item.updated_at ?? (item as any).last_update} />
+                        </TabsTrigger>
+                        <TabsTrigger value="team" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0 flex items-center justify-center gap-0.5">
+                          Team
+                          <UnreadTabDot entityKey={`equipment_${item.id}_team`} updatedAt={item.updated_at ?? (item as any).last_update} />
+                        </TabsTrigger>
+                        <TabsTrigger value="progress" className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0 flex items-center justify-center gap-0.5">
+                          Updates
+                          <UnreadTabDot
+                            entityKey={`equipment_${item.id}_progress`}
+                            updatedAt={
+                              (item.progressEntries?.length
+                                ? (() => {
+                                    const times = (item.progressEntries as any[]).map((e: any) => (e.date ? new Date(e.date).getTime() : 0)).filter(Boolean);
+                                    return times.length ? new Date(Math.max(...times)).toISOString() : undefined;
+                                  })()
+                                : undefined) ?? item.updated_at ?? (item as any).last_update
+                            }
+                          />
+                        </TabsTrigger>
                         <TabsTrigger
                           value="documents"
-                          className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0"
+                          className="text-xs px-2 sm:px-3 whitespace-nowrap flex-shrink-0 flex items-center justify-center gap-0.5"
                           onClick={() => handleDocsTabClick(item.id)}
                         >
                           Docs
+                          <UnreadTabDot
+                            entityKey={`equipment_${item.id}_documents`}
+                            updatedAt={
+                              (documents[item.id]?.length
+                                ? (() => {
+                                    const dates = (documents[item.id] || []).map((d: any) => d.uploadDate || d.updated_at || d.created_at).filter(Boolean);
+                                    const times = dates.map((d: string) => new Date(d).getTime()).filter((t) => !isNaN(t));
+                                    return times.length ? new Date(Math.max(...times)).toISOString() : undefined;
+                                  })()
+                                : undefined) ?? item.updated_at ?? (item as any).last_update
+                            }
+                          />
                         </TabsTrigger>
                       </TabsList>
                     </div>
@@ -8914,6 +9020,8 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                                   onClick={() => {
                                   if (projectId === 'standalone') {
                                     // For standalone equipment, navigate to Settings tab in equipment details view
+                                    markAsSeen(`equipment_${item.id}`);
+                                    markAsSeen(`equipment_${item.id}_team`);
                                     setViewingEquipmentId(item.id);
                                     // Use setTimeout to ensure viewingEquipmentId is set first
                                     setTimeout(() => {
@@ -9954,7 +10062,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                                       'CAD': 'bg-blue-100 text-blue-800',
                                       'Document': 'bg-green-100 text-green-800',
                                       'Spreadsheet': 'bg-yellow-100 text-yellow-800',
-                                      'Image': 'bg-purple-100 text-purple-800',
+                                      'Image': 'bg-blue-100 text-blue-800',
                                       'Other': 'bg-gray-100 text-gray-800'
                                     };
                                     return colors[category] || colors['Other'];
@@ -9977,12 +10085,13 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
 
                                   return (
                                     <div key={doc.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 p-2 sm:p-2 bg-white rounded border border-gray-200 mb-2 last:mb-0 hover:shadow-sm transition-shadow">
-                                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleOpenDocument(doc)}>
+                                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { markAsSeen(`document_${doc.id}`); handleOpenDocument(doc); }}>
                                         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1">
                                           <span className="text-sm flex-shrink-0">{fileIcon}</span>
                                           <span className="text-xs sm:text-sm font-medium text-gray-800 hover:text-gray-900 break-words min-w-0 flex-1">
                                             {doc.document_name || doc.name}
                                           </span>
+                                          <UnreadEntityDot entityKey={`document_${doc.id}`} updatedAt={doc.uploadDate || doc.updated_at || doc.created_at} />
                                           {isVDCRApproved && (
                                             <span className="px-1.5 py-0.5 text-[10px] sm:text-xs rounded-full flex-shrink-0 bg-blue-100 text-blue-800 font-medium border border-blue-200">
                                               Approved VDCR Doc
@@ -10003,6 +10112,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                                           className="h-7 w-7 sm:h-6 sm:w-6 p-0 flex-shrink-0"
                                           onClick={(e) => {
                                             e.stopPropagation();
+                                            markAsSeen(`document_${doc.id}`);
                                             handleOpenDocument(doc);
                                           }}
                                         >
@@ -10079,8 +10189,10 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                           <Button
                             size="sm"
                             variant="outline"
-                            className="flex-1 bg-white hover:bg-purple-50 border-purple-200 hover:border-purple-300 text-purple-700 text-xs sm:text-sm"
+                            className="flex-1 bg-white hover:bg-blue-50 border-blue-200 hover:border-blue-300 text-blue-700 text-xs sm:text-sm"
                             onClick={() => {
+                              markAsSeen(`equipment_${item.id}`);
+                              markAsSeen(`equipment_${item.id}_overview`);
                               if (onViewDetails) {
                                 onViewDetails();
                               } else {
@@ -10504,8 +10616,10 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
       {showAddEquipmentForm && (
         projectId === 'standalone' ? (
           <AddStandaloneEquipmentFormNew
-            onClose={() => setShowAddEquipmentForm(false)}
+            onClose={() => { setShowAddEquipmentForm(false); setEditingStandaloneEquipment(null); }}
             onSubmit={handleAddStandaloneEquipment}
+            editData={editingStandaloneEquipment ?? undefined}
+            isEditMode={!!editingStandaloneEquipment}
           />
         ) : (
         <AddEquipmentForm

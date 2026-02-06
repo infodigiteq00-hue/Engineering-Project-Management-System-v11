@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
-import { X, Save, Upload, Users, FileText, Settings, Building2, Plus, CheckCircle, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Pencil, UserPlus, Loader2 } from "lucide-react";
+import { X, Save, Upload, Users, FileText, Settings, Building2, Plus, CheckCircle, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Pencil, UserPlus, Loader2, FileSpreadsheet, Download } from "lucide-react";
+import * as XLSX from "xlsx-js-style";
 import { designSystem } from "@/lib/design-system";
 import { fastAPI, uploadUnpricedPODocument, uploadDesignInputsDocument, uploadClientReferenceDocument, uploadOtherDocument, uploadEquipmentDocument, updateProjectDocumentLinks, deleteProjectDocument } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
@@ -52,10 +53,10 @@ interface ProjectFormData {
   };
   scopeDescription: string;
   
-  // Document Uploads
-  unpricedPOFile: File | null;
-  designInputsPID: File | null;
-  clientReferenceDoc: File | null;
+  // Document Uploads (all support multiple files per category)
+  unpricedPOFile: File[] | null;
+  designInputsPID: File[] | null;
+  clientReferenceDoc: File[] | null;
   otherDocuments: File[] | null;
   
   // Additional Information
@@ -1933,7 +1934,7 @@ Industry: Petrochemical`;
         console.warn('⚠️ No VDCR Manager being edited');
         toast({
           title: "Error",
-          description: "No VDCR Manager selected for editing",
+          description: "No Documentation Manager selected for editing",
           variant: "destructive",
         });
         return;
@@ -2083,7 +2084,7 @@ Industry: Petrochemical`;
                     name: newName,
                     email: savedEmail || '',
                     phone: savedPhone || '',
-                    position: 'VDCR Manager',
+                    position: 'Documentation Manager',
                     role: 'vdcr_manager',
                     status: 'active',
                     permissions: ['view', 'edit', 'approve'],
@@ -2320,7 +2321,113 @@ Industry: Petrochemical`;
     }
   };
 
+  // Bulk equipment upload - standard types (must match step 3 list)
+  const STANDARD_EQUIPMENT_TYPES = ['Heat Exchanger', 'Pressure Vessel', 'Reactor', 'Storage Tank', 'Distillation Column'];
+  const equipmentBulkInputRef = useRef<HTMLInputElement>(null);
 
+  const EQUIPMENT_BULK_COLUMNS = [
+    { key: 'srNo', header: 'Sr. No. *', placeholder: 'e.g., 1, 2, 3' },
+    { key: 'equipmentType', header: 'Equipment Type *', placeholder: 'e.g., Reactor, Heat Exchanger, Pressure Vessel' },
+    { key: 'tagNo', header: 'Tag No. *', placeholder: 'e.g., Reactor-Unit-001' },
+    { key: 'jobNo', header: 'Job No. *', placeholder: 'e.g., Job-2024-001' },
+    { key: 'equipmentTitle', header: 'Equipment Title *', placeholder: 'Enter equipment title' },
+    { key: 'size', header: 'Size (optional)', placeholder: 'e.g., 4.2m x 1.6m — Dimensions (length x width x height)' },
+    { key: 'material', header: 'Material (optional)', placeholder: 'e.g., SS 304, Carbon Steel — Primary material specification' },
+    { key: 'designCode', header: 'Design Code (optional)', placeholder: 'e.g., ASME VIII Div 1, TEMA Class R — Applicable design standard' },
+  ] as const;
+
+  const downloadEquipmentBulkTemplate = () => {
+    const headers = EQUIPMENT_BULK_COLUMNS.map(c => c.header);
+    const placeholderRow = EQUIPMENT_BULK_COLUMNS.map(c => c.placeholder);
+    const wsData = [headers, placeholderRow];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    // Column widths: fit headers clearly; examples can be truncated to avoid horizontal scroll
+    ws['!cols'] = EQUIPMENT_BULK_COLUMNS.map((c) => ({
+      wch: Math.min(Math.max(c.header.length + 2, 14), 28),
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Equipment');
+    XLSX.writeFile(wb, 'Equipment_Bulk_Upload_Template.xlsx');
+  };
+
+  const parseEquipmentBulkExcel = async (file: File) => {
+    try {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (rows.length < 2) {
+        toast({ title: 'Invalid template', description: 'Template must have a header row and at least one data row.', variant: 'destructive' });
+        return;
+      }
+      const headerRow = (rows[0] as string[]).map(h => String(h || '').trim());
+      const idx = {
+        srNo: headerRow.findIndex(h => /sr\.?\s*no\.?/i.test(h) || h === 'Sr. No. *'),
+        equipmentType: headerRow.findIndex(h => h === 'Equipment Type *' || /equipment\s*type/i.test(h)),
+        tagNo: headerRow.findIndex(h => h === 'Tag No. *' || /tag\s*no\.?/i.test(h)),
+        jobNo: headerRow.findIndex(h => h === 'Job No. *' || /job\s*no\.?/i.test(h)),
+        equipmentTitle: headerRow.findIndex(h => h === 'Equipment Title *' || /equipment\s*title/i.test(h)),
+        size: headerRow.findIndex(h => h === 'Size (optional)' || h === 'Size'),
+        material: headerRow.findIndex(h => h === 'Material (optional)' || h === 'Material'),
+        designCode: headerRow.findIndex(h => h === 'Design Code (optional)' || h === 'Design Code'),
+      };
+      if (idx.equipmentType < 0 || idx.tagNo < 0 || idx.jobNo < 0 || idx.equipmentTitle < 0) {
+        toast({ title: 'Invalid template', description: 'Template must include columns: Equipment Type *, Tag No. *, Job No. *, Equipment Title *', variant: 'destructive' });
+        return;
+      }
+      const getVal = (row: unknown[], i: number) => (i >= 0 && row[i] != null ? String(row[i]).trim() : '');
+      const isPlaceholderRow = (row: unknown[]) => EQUIPMENT_BULK_COLUMNS.every((c) => {
+        const v = getVal(row, idx[c.key]);
+        return !v || v === c.placeholder;
+      });
+      const newByType: Record<string, Array<{ id: string; tagNumber: string; jobNumber: string; manufacturingSerial: string; size: string; material: string; designCode: string; documents: File[] }>> = {};
+      const customTypesToAdd: string[] = [];
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r] as unknown[];
+        if (isPlaceholderRow(row)) continue;
+        const equipmentType = getVal(row, idx.equipmentType);
+        const tagNumber = getVal(row, idx.tagNo);
+        const jobNumber = getVal(row, idx.jobNo);
+        const equipmentTitle = getVal(row, idx.equipmentTitle);
+        if (!equipmentType || !tagNumber || !jobNumber || !equipmentTitle) continue;
+        const typeKey = equipmentType === 'Distillation Column' ? 'Distillation Column' : equipmentType;
+        if (!STANDARD_EQUIPMENT_TYPES.includes(typeKey) && !customTypesToAdd.includes(typeKey)) customTypesToAdd.push(typeKey);
+        if (!newByType[typeKey]) newByType[typeKey] = [];
+        newByType[typeKey].push({
+          id: `${typeKey}-${Date.now()}-${r}`,
+          tagNumber,
+          jobNumber,
+          manufacturingSerial: equipmentTitle,
+          size: getVal(row, idx.size),
+          material: getVal(row, idx.material),
+          designCode: getVal(row, idx.designCode),
+          documents: [],
+        });
+      }
+      const totalAdded = Object.values(newByType).reduce((s, arr) => s + arr.length, 0);
+      if (totalAdded === 0) {
+        toast({ title: 'No valid rows', description: 'No rows with all mandatory fields (Equipment Type, Tag No., Job No., Equipment Title) were found.', variant: 'destructive' });
+        return;
+      }
+      setCustomEquipmentType(prev => {
+        const next = [...prev];
+        customTypesToAdd.forEach(t => { if (!next.includes(t)) next.push(t); });
+        return next;
+      });
+      setEquipmentDetails(prev => {
+        const next = { ...prev };
+        Object.entries(newByType).forEach(([type, list]) => {
+          next[type] = [...(next[type] || []), ...list];
+        });
+        return next;
+      });
+      toast({ title: 'Bulk upload complete', description: `Added ${totalAdded} equipment item(s) from Excel.`, variant: 'default' });
+      if (equipmentBulkInputRef.current) equipmentBulkInputRef.current.value = '';
+    } catch (err: any) {
+      toast({ title: 'Upload failed', description: err?.message || 'Could not read the Excel file.', variant: 'destructive' });
+    }
+  };
 
   const nextStep = async () => {
     if (currentStep < totalSteps) {
@@ -2688,267 +2795,123 @@ Industry: Petrochemical`;
       const clientReferenceDocuments = [];
       const otherDocuments = [];
       
-      // Upload Unpriced PO File
-      if (formData.unpricedPOFile) {
+      // Upload Unpriced PO Files (multiple)
+      const unpricedPOFiles = formData.unpricedPOFile && formData.unpricedPOFile.length > 0 ? formData.unpricedPOFile : [];
+      for (let i = 0; i < unpricedPOFiles.length; i++) {
+        const file = unpricedPOFiles[i];
         try {
-          // console.log('📄 Uploading Unpriced PO File...');
-          // console.log('📄 File details:', {
-          //   name: formData.unpricedPOFile.name,
-          //   size: formData.unpricedPOFile.size,
-          //   type: formData.unpricedPOFile.type
-          // });
-          
-          // Skip bucket check and go directly to upload
-          // console.log('📄 Skipping bucket check, going directly to upload...');
-          
-          // Upload file to Supabase Storage with proper folder structure
-          const fileName = `${formData.projectTitle}/Unpriced PO File/${Date.now()}_${formData.unpricedPOFile.name}`;
-          // console.log('📄 File path:', fileName);
-          
-          // console.log('📄 About to upload to Supabase Storage...');
-          // console.log('📄 Bucket name: project-documents');
-          // console.log('📄 File name:', fileName);
-          // console.log('📄 File object:', formData.unpricedPOFile);
-          
-          // Try direct fetch API approach (like test file)
-          // console.log('📄 Using direct fetch API approach...');
-          
-          try {
-            // console.log('📄 About to call fetch API...');
-        
-        // Create FormData
-        const formDataUpload = new FormData();
-        formDataUpload.append('file', formData.unpricedPOFile);
-        
-        // Direct API call with service role key using axios
-        const response = await axios.post(`https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/project-documents/${fileName}`, formDataUpload, {
-          headers: {
-            'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk`,
-            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk',
-            'Content-Type': 'multipart/form-data'
-          }
-        });
-        
-        // console.log('📄 Axios API call completed!');
-        // console.log('📄 Response status:', response.status);
-        
-        if (response.status === 200) {
-          const uploadData = response.data;
-          // console.log('✅ Direct API upload successful!');
-          //   console.log('📄 Upload data:', uploadData);
-            
-            // Get public URL
-          const publicUrl = `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/project-documents/${fileName}`;
-          // console.log('🌐 Public URL:', publicUrl);
-            
-          // Continue with database operations
-            const documentData = {
-              name: formData.unpricedPOFile.name,
-            url: publicUrl,
-              uploadedBy: user.id,
-              size: formData.unpricedPOFile.size,
-              mimeType: formData.unpricedPOFile.type
-            };
-            
-          // console.log('📄 Document data for database:', documentData);
-            
-            const uploadedDoc = await uploadUnpricedPODocument(createdProject[0].id, documentData);
-          // console.log('📄 Database upload result:', uploadedDoc);
-            
-            // Add to project document links
-            const documentLink = {
-              id: uploadedDoc[0].id,
-              name: formData.unpricedPOFile.name,
-            url: publicUrl,
-              uploaded_by: user.id,
-              created_at: uploadedDoc[0].created_at,
-              file_size: formData.unpricedPOFile.size,
-              mime_type: formData.unpricedPOFile.type
-            };
-            
-            unpricedPODocuments.push(documentLink);
-          // console.log('📄 Added to unpricedPODocuments array:', documentLink);
-          
-          // console.log('✅ Unpriced PO File uploaded successfully');
-        } else {
-          // console.error('❌ Direct API upload failed:', response.status, response.statusText);
-          const errorText = response.data;
-          // console.error('❌ Error response:', errorText);
-        }
-      } catch (error) {
-        console.error('❌ Direct API upload error:', error.message);
-        console.error('❌ Error stack:', error.stack);
-          }
-        } catch (docError) {
-          console.error('❌ Error processing Unpriced PO File:', docError);
-          console.error('❌ Error details:', {
-            message: docError.message,
-            stack: docError.stack
+          const fileName = `${formData.projectTitle}/Unpriced PO File/${Date.now()}_${file.name}`;
+          const formDataUpload = new FormData();
+          formDataUpload.append('file', file);
+          const response = await axios.post(`https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/project-documents/${fileName}`, formDataUpload, {
+            headers: {
+              'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk`,
+              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk',
+              'Content-Type': 'multipart/form-data'
+            }
           });
+          if (response.status === 200) {
+            const publicUrl = `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/project-documents/${fileName}`;
+            const documentData = {
+              name: file.name,
+              url: publicUrl,
+              uploadedBy: user.id,
+              size: file.size,
+              mimeType: file.type
+            };
+            const uploadedDoc = await uploadUnpricedPODocument(createdProject[0].id, documentData);
+            unpricedPODocuments.push({
+              id: uploadedDoc[0].id,
+              name: file.name,
+              url: publicUrl,
+              uploaded_by: user.id,
+              created_at: uploadedDoc[0].created_at,
+              file_size: file.size,
+              mime_type: file.type
+            });
+          }
+        } catch (docError) {
+          console.error('❌ Error processing Unpriced PO File:', file.name, docError);
         }
       }
       
-      // Upload Design Inputs/PID File
-      if (formData.designInputsPID) {
+      // Upload Design Inputs/PID Files (multiple)
+      const designInputsFiles = formData.designInputsPID && formData.designInputsPID.length > 0 ? formData.designInputsPID : [];
+      for (let i = 0; i < designInputsFiles.length; i++) {
+        const file = designInputsFiles[i];
         try {
-          // console.log('📄 Uploading Design Inputs/PID File...');
-          
-          // Upload file to Supabase Storage with proper folder structure
-          const fileName = `${formData.projectTitle}/Design Inputs/${Date.now()}_${formData.designInputsPID.name}`;
-          
-          // Use direct fetch API approach
-          // console.log('📄 Using direct fetch API approach for Design Inputs...');
-          
-          try {
-            // console.log('📄 About to call fetch API for Design Inputs...');
-            
-            // Create FormData
-            const formDataUpload = new FormData();
-            formDataUpload.append('file', formData.designInputsPID);
-            
-            // Direct API call with service role key using axios
-            const response = await axios.post(`https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/project-documents/${fileName}`, formDataUpload, {
-              headers: {
-                'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk`,
-                'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk',
-                'Content-Type': 'multipart/form-data'
-              }
-            });
-            
-            // console.log('📄 Axios API call completed for Design Inputs!');
-            // console.log('📄 Response status:', response.status);
-            
-            if (response.status === 200) {
-              const uploadData = response.data;
-              // console.log('✅ Direct API upload successful for Design Inputs!');
-              // console.log('📄 Upload data:', uploadData);
-              
-            // Get public URL
-              const publicUrl = `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/project-documents/${fileName}`;
-              // console.log('🌐 Public URL:', publicUrl);
-            
-              // Continue with database operations
+          const fileName = `${formData.projectTitle}/Design Inputs/${Date.now()}_${file.name}`;
+          const formDataUpload = new FormData();
+          formDataUpload.append('file', file);
+          const response = await axios.post(`https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/project-documents/${fileName}`, formDataUpload, {
+            headers: {
+              'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk`,
+              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk',
+              'Content-Type': 'multipart/form-data'
+            }
+          });
+          if (response.status === 200) {
+            const publicUrl = `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/project-documents/${fileName}`;
             const documentData = {
-              name: formData.designInputsPID.name,
-                url: publicUrl,
+              name: file.name,
+              url: publicUrl,
               uploadedBy: user.id,
-              size: formData.designInputsPID.size,
-              mimeType: formData.designInputsPID.type
+              size: file.size,
+              mimeType: file.type
             };
-              
-              // console.log('📄 Document data for database:', documentData);
-            
             const uploadedDoc = await uploadDesignInputsDocument(createdProject[0].id, documentData);
-              // console.log('📄 Database upload result:', uploadedDoc);
-            
-            // Add to project document links
-              const documentLink = {
+            designInputsDocuments.push({
               id: uploadedDoc[0].id,
-              name: formData.designInputsPID.name,
-                url: publicUrl,
+              name: file.name,
+              url: publicUrl,
               uploaded_by: user.id,
               created_at: uploadedDoc[0].created_at,
-              file_size: formData.designInputsPID.size,
-              mime_type: formData.designInputsPID.type
-              };
-              
-              designInputsDocuments.push(documentLink);
-              // console.log('📄 Added to designInputsDocuments array:', documentLink);
-              
-              // console.log('✅ Design Inputs/PID File uploaded successfully');
-            } else {
-              // console.error('❌ Direct API upload failed for Design Inputs:', response.status, response.statusText);
-              const errorText = response.data;
-              // console.error('❌ Error response:', errorText);
-            }
-          } catch (error) {
-            // console.error('❌ Direct API upload error for Design Inputs:', error.message);
-            // console.error('❌ Error stack:', error.stack);
+              file_size: file.size,
+              mime_type: file.type
+            });
           }
         } catch (docError) {
-          // console.error('❌ Error processing Design Inputs/PID File:', docError);
+          console.error('❌ Error processing Design Inputs/PID File:', file.name, docError);
         }
       }
       
-      // Upload Client Reference Document
-      if (formData.clientReferenceDoc) {
+      // Upload Client Reference Documents (multiple)
+      const clientRefFiles = formData.clientReferenceDoc && formData.clientReferenceDoc.length > 0 ? formData.clientReferenceDoc : [];
+      for (let i = 0; i < clientRefFiles.length; i++) {
+        const file = clientRefFiles[i];
         try {
-          // console.log('📄 Uploading Client Reference Document...');
-          
-          // Upload file to Supabase Storage with proper folder structure
-          const fileName = `${formData.projectTitle}/Client's Reference Document/${Date.now()}_${formData.clientReferenceDoc.name}`;
-          
-          // Use direct fetch API approach
-          // console.log('📄 Using direct fetch API approach for Client Reference...');
-          
-          try {
-            // console.log('📄 About to call fetch API for Client Reference...');
-            
-            // Create FormData
-            const formDataUpload = new FormData();
-            formDataUpload.append('file', formData.clientReferenceDoc);
-            
-            // Direct API call with service role key using axios
-            const response = await axios.post(`https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/project-documents/${fileName}`, formDataUpload, {
-              headers: {
-                'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk`,
-                'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk',
-                'Content-Type': 'multipart/form-data'
-              }
-            });
-            
-            // console.log('📄 Axios API call completed for Client Reference!');
-            // console.log('📄 Response status:', response.status);
-            
-            if (response.status === 200) {
-              const uploadData = response.data;
-              // console.log('✅ Direct API upload successful for Client Reference!');
-              // console.log('📄 Upload data:', uploadData);
-              
-            // Get public URL
-              const publicUrl = `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/project-documents/${fileName}`;
-              // console.log('🌐 Public URL:', publicUrl);
-            
-              // Continue with database operations
+          const fileName = `${formData.projectTitle}/Client's Reference Document/${Date.now()}_${file.name}`;
+          const formDataUpload = new FormData();
+          formDataUpload.append('file', file);
+          const response = await axios.post(`https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/project-documents/${fileName}`, formDataUpload, {
+            headers: {
+              'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk`,
+              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFtbWFvc21rZ3drYW1mamhjeGlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjYyNzU4NywiZXhwIjoyMDcyMjAzNTg3fQ.PVg3nnfYEBnqpceBXJjnZJIc9lwjmW1G7Lo2U7t0ehk',
+              'Content-Type': 'multipart/form-data'
+            }
+          });
+          if (response.status === 200) {
+            const publicUrl = `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/project-documents/${fileName}`;
             const documentData = {
-              name: formData.clientReferenceDoc.name,
-                url: publicUrl,
+              name: file.name,
+              url: publicUrl,
               uploadedBy: user.id,
-              size: formData.clientReferenceDoc.size,
-              mimeType: formData.clientReferenceDoc.type
+              size: file.size,
+              mimeType: file.type
             };
-              
-              // console.log('📄 Document data for database:', documentData);
-            
             const uploadedDoc = await uploadClientReferenceDocument(createdProject[0].id, documentData);
-              // console.log('📄 Database upload result:', uploadedDoc);
-            
-            // Add to project document links
-              const documentLink = {
+            clientReferenceDocuments.push({
               id: uploadedDoc[0].id,
-              name: formData.clientReferenceDoc.name,
-                url: publicUrl,
+              name: file.name,
+              url: publicUrl,
               uploaded_by: user.id,
               created_at: uploadedDoc[0].created_at,
-              file_size: formData.clientReferenceDoc.size,
-              mime_type: formData.clientReferenceDoc.type
-              };
-              
-              clientReferenceDocuments.push(documentLink);
-              // console.log('📄 Added to clientReferenceDocuments array:', documentLink);
-              
-              // console.log('✅ Client Reference Document uploaded successfully');
-            } else {
-              // console.error('❌ Direct API upload failed for Client Reference:', response.status, response.statusText);
-              const errorText = response.data;
-              // console.error('❌ Error response:', errorText);
-            }
-          } catch (error) {
-            // console.error('❌ Direct API upload error for Client Reference:', error.message);
-            // console.error('❌ Error stack:', error.stack);
+              file_size: file.size,
+              mime_type: file.type
+            });
           }
         } catch (docError) {
-          // console.error('❌ Error processing Client Reference Document:', docError);
+          console.error('❌ Error processing Client Reference Document:', file.name, docError);
         }
       }
       
@@ -3309,36 +3272,33 @@ Industry: Petrochemical`;
       status: 'active'
     };
     
-    // Send email notifications to project team members
+    // Resolve manager email from contacts or firm team (never use @company.com – use only saved email for notifications and assignment)
+    const resolveManagerEmail = async (name: string, role: 'project_manager' | 'vdcr_manager'): Promise<{ email: string | null; phone: string }> => {
+      const contact = role === 'project_manager' ? projectManagerContacts[name] : vdcrManagerContacts[name];
+      const phone = contact?.phone || '';
+      if (contact?.email && contact.email.includes('@') && !contact.email.toLowerCase().includes('@company')) return { email: contact.email, phone };
+      if (name.includes('@')) return { email: name, phone };
+      const firmId = localStorage.getItem('firmId');
+      if (!firmId) return { email: null, phone };
+      try {
+        const members = await fastAPI.getAllFirmTeamMembers(firmId);
+        const member = (members || []).find((m: any) => m.name === name && m.role === role);
+        const email = member?.email && member.email.includes('@') && !member.email.toLowerCase().includes('@company') ? member.email : null;
+        return { email, phone: member?.phone || phone };
+      } catch {
+        return { email: null, phone };
+      }
+    };
+
+    // Send email notifications to project team members (only when we have a valid saved email)
     try {
-      // console.log('📧 Sending project team notifications...');
-      // console.log('📧 Project manager contacts:', projectManagerContacts);
-      // console.log('📧 VDCR manager contacts:', vdcrManagerContacts);
-      // console.log('📧 Form data project manager:', formData.projectManager);
-      // console.log('📧 Form data VDCR manager:', formData.vdcrManager);
-      
-      // Get company name from user data
       const userData = JSON.parse(localStorage.getItem('userData') || '{}');
       const companyName = userData.company_name || 'Your Company';
       
-      // Send email to project manager if assigned
       if (formData.projectManager && formData.projectManager.trim() !== '') {
-        // Get email from projectManagerContacts
-        const projectManagerContact = projectManagerContacts[formData.projectManager];
-        // Only use contact email if it exists and is valid, otherwise check if the name itself is an email
-        let projectManagerEmail = projectManagerContact?.email;
-        if (!projectManagerEmail || !projectManagerEmail.includes('@')) {
-          // If name contains @, treat it as email, otherwise generate one (only if no contact exists)
-          if (formData.projectManager.includes('@') && !projectManagerContact) {
-            projectManagerEmail = formData.projectManager;
-          } else if (!projectManagerContact) {
-            // Only generate email if we don't have contact info
-            projectManagerEmail = `${formData.projectManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-          }
-        }
-        
-        if (projectManagerEmail && projectManagerEmail.includes('@') && !projectManagerEmail.includes('@company.com@')) {
-          const projectManagerNotification = await sendProjectTeamNotifications({
+        const { email: projectManagerEmail } = await resolveManagerEmail(formData.projectManager, 'project_manager');
+        if (projectManagerEmail) {
+          await sendProjectTeamNotifications({
             project_name: formData.projectTitle,
             team_member_name: formData.projectManager,
             team_member_email: projectManagerEmail,
@@ -3346,31 +3306,15 @@ Industry: Petrochemical`;
             company_name: companyName,
             dashboard_url: getDashboardUrl('project_manager')
           });
-          
-          // console.log('📊 Project manager notification result:', projectManagerNotification);
         } else {
-          console.log('⚠️ Project manager email not found or invalid:', projectManagerEmail);
+          console.warn('⚠️ Project manager email not found (skipping notification). Use the email saved when the team member was first added.');
         }
       }
       
-      // Send email to VDCR manager if assigned
       if (formData.vdcrManager && formData.vdcrManager.trim() !== '') {
-        // Get email from vdcrManagerContacts
-        const vdcrManagerContact = vdcrManagerContacts[formData.vdcrManager];
-        // Only use contact email if it exists and is valid, otherwise check if the name itself is an email
-        let vdcrManagerEmail = vdcrManagerContact?.email;
-        if (!vdcrManagerEmail || !vdcrManagerEmail.includes('@')) {
-          // If name contains @, treat it as email, otherwise generate one (only if no contact exists)
-          if (formData.vdcrManager.includes('@') && !vdcrManagerContact) {
-            vdcrManagerEmail = formData.vdcrManager;
-          } else if (!vdcrManagerContact) {
-            // Only generate email if we don't have contact info
-            vdcrManagerEmail = `${formData.vdcrManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-          }
-        }
-        
-        if (vdcrManagerEmail && vdcrManagerEmail.includes('@') && !vdcrManagerEmail.includes('@company.com@')) {
-          const vdcrManagerNotification = await sendProjectTeamNotifications({
+        const { email: vdcrManagerEmail } = await resolveManagerEmail(formData.vdcrManager, 'vdcr_manager');
+        if (vdcrManagerEmail) {
+          await sendProjectTeamNotifications({
             project_name: formData.projectTitle,
             team_member_name: formData.vdcrManager,
             team_member_email: vdcrManagerEmail,
@@ -3378,14 +3322,10 @@ Industry: Petrochemical`;
             company_name: companyName,
             dashboard_url: getDashboardUrl('vdcr_manager')
           });
-          
-          // console.log('📊 VDCR manager notification result:', vdcrManagerNotification);
         } else {
-          console.log('⚠️ VDCR manager email not found or invalid:', vdcrManagerEmail);
+          console.warn('⚠️ VDCR manager email not found (skipping notification). Use the email saved when the team member was first added.');
         }
       }
-      
-      // console.log('✅ Project team notifications sent successfully');
     } catch (notificationError) {
       console.error('❌ Notification error (project still created):', notificationError);
     }
@@ -3416,157 +3356,89 @@ Industry: Petrochemical`;
         return;
       }
       
-      // Add Project Manager to project_members table
+      // Add Project Manager to project_members table (only with resolved email – no @company.com)
       if (formData.projectManager && formData.projectManager.trim() !== '') {
-        const projectManagerContact = projectManagerContacts[formData.projectManager];
-        let projectManagerEmail = projectManagerContact?.email;
-        
-        // Only generate email if we don't have contact info
-        if (!projectManagerEmail || !projectManagerEmail.includes('@')) {
-          // If name contains @, treat it as email, otherwise generate one
-          if (formData.projectManager.includes('@') && !projectManagerContact) {
-            projectManagerEmail = formData.projectManager;
-          } else if (!projectManagerContact) {
-            projectManagerEmail = `${formData.projectManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-          }
+        const { email: projectManagerEmail, phone: projectManagerPhone } = await resolveManagerEmail(formData.projectManager, 'project_manager');
+        if (projectManagerEmail) {
+          const projectManagerData = {
+            project_id: projectId,
+            name: formData.projectManager,
+            email: projectManagerEmail,
+            phone: projectManagerPhone || '',
+            position: 'Project Manager',
+            role: 'project_manager',
+            status: 'active',
+            permissions: ['view', 'edit', 'delete'],
+            equipment_assignments: ["All Equipment"],
+            data_access: ['equipment', 'documents', 'progress', 'team'],
+            access_level: 'editor',
+            avatar: formData.projectManager.split(' ').map(n => n[0]).join('').toUpperCase()
+          };
+          await fastAPI.createProjectMember(projectManagerData);
         }
-        
-        // Prevent duplicate @company.com
-        if (projectManagerEmail && projectManagerEmail.includes('@company.com@')) {
-          projectManagerEmail = projectManagerEmail.replace('@company.com@', '@company.com');
-        }
-        
-        const projectManagerData = {
-          project_id: projectId,
-          name: formData.projectManager,
-          email: projectManagerEmail,
-          phone: projectManagerContact?.phone || '',
-          position: 'Project Manager',
-          role: 'project_manager',
-          status: 'active',
-          permissions: ['view', 'edit', 'delete'],
-          equipment_assignments: ["All Equipment"], // Assign to all equipment
-          data_access: ['equipment', 'documents', 'progress', 'team'],
-          access_level: 'editor',
-          avatar: formData.projectManager.split(' ').map(n => n[0]).join('').toUpperCase()
-        };
-        
-        // console.log('👥 Project Manager data being sent:', projectManagerData);
-        await fastAPI.createProjectMember(projectManagerData);
-        // console.log('✅ Project Manager added to project team:', formData.projectManager);
       }
       
-      // Add VDCR Manager to project_members table
+      // Add VDCR Manager to project_members table (only with resolved email – no @company.com)
       if (formData.vdcrManager && formData.vdcrManager.trim() !== '') {
-        const vdcrManagerContact = vdcrManagerContacts[formData.vdcrManager];
-        let vdcrManagerEmail = vdcrManagerContact?.email;
-        
-        // Only generate email if we don't have contact info
-        if (!vdcrManagerEmail || !vdcrManagerEmail.includes('@')) {
-          // If name contains @, treat it as email, otherwise generate one
-          if (formData.vdcrManager.includes('@') && !vdcrManagerContact) {
-            vdcrManagerEmail = formData.vdcrManager;
-          } else if (!vdcrManagerContact) {
-            vdcrManagerEmail = `${formData.vdcrManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-          }
+        const { email: vdcrManagerEmail, phone: vdcrManagerPhone } = await resolveManagerEmail(formData.vdcrManager, 'vdcr_manager');
+        if (vdcrManagerEmail) {
+          const vdcrManagerData = {
+            project_id: projectId,
+            name: formData.vdcrManager,
+            email: vdcrManagerEmail,
+            phone: vdcrManagerPhone || '',
+            position: 'Documentation Manager',
+            role: 'vdcr_manager',
+            status: 'active',
+            permissions: ['view', 'edit', 'approve'],
+            equipment_assignments: ["All Equipment"],
+            data_access: ['equipment', 'documents', 'progress', 'vdcr'],
+            access_level: 'editor',
+            avatar: formData.vdcrManager.split(' ').map(n => n[0]).join('').toUpperCase()
+          };
+          await fastAPI.createProjectMember(vdcrManagerData);
         }
-        
-        // Prevent duplicate @company.com
-        if (vdcrManagerEmail && vdcrManagerEmail.includes('@company.com@')) {
-          vdcrManagerEmail = vdcrManagerEmail.replace('@company.com@', '@company.com');
-        }
-        
-        const vdcrManagerData = {
-          project_id: projectId,
-          name: formData.vdcrManager,
-          email: vdcrManagerEmail,
-          phone: vdcrManagerContact?.phone || '',
-          position: 'VDCR Manager',
-          role: 'vdcr_manager',
-          status: 'active',
-          permissions: ['view', 'edit', 'approve'],
-          equipment_assignments: ["All Equipment"], // Assign to all equipment
-          data_access: ['equipment', 'documents', 'progress', 'vdcr'],
-          access_level: 'editor',
-          avatar: formData.vdcrManager.split(' ').map(n => n[0]).join('').toUpperCase()
-        };
-        
-        // console.log('👥 VDCR Manager data being sent:', vdcrManagerData);
-        await fastAPI.createProjectMember(vdcrManagerData);
-        // console.log('✅ VDCR Manager added to project team:', formData.vdcrManager);
       }
       
       // console.log('✅ Project team members added successfully');
 
-      // 🆕 Create invites for project manager and VDCR manager
+      // Create invites only when we have a valid saved email (no @company.com)
       const firmId = localStorage.getItem('firmId');
       const currentUserId = user?.id || localStorage.getItem('userId');
       
       if (formData.projectManager && formData.projectManager.trim() !== '') {
-        try {
-          const pmContact = projectManagerContacts[formData.projectManager];
-          let pmEmail = pmContact?.email;
-          
-          // Only generate email if we don't have contact info
-          if (!pmEmail || !pmEmail.includes('@')) {
-            if (formData.projectManager.includes('@') && !pmContact) {
-              pmEmail = formData.projectManager;
-            } else if (!pmContact) {
-              pmEmail = `${formData.projectManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-            }
+        const { email: pmEmail } = await resolveManagerEmail(formData.projectManager, 'project_manager');
+        if (pmEmail && firmId) {
+          try {
+            await fastAPI.createInvite({
+              email: pmEmail,
+              full_name: formData.projectManager,
+              role: 'project_manager',
+              firm_id: firmId,
+              project_id: projectId,
+              invited_by: currentUserId || 'system'
+            });
+          } catch (inviteError) {
+            console.error('❌ Error creating PM invite:', inviteError);
           }
-          
-          // Prevent duplicate @company.com
-          if (pmEmail && pmEmail.includes('@company.com@')) {
-            pmEmail = pmEmail.replace('@company.com@', '@company.com');
-          }
-          
-          // console.log('📧 Creating invite for Project Manager...');
-          await fastAPI.createInvite({
-            email: pmEmail,
-            full_name: formData.projectManager,
-            role: 'project_manager',
-            firm_id: firmId || '',
-            project_id: projectId,
-            invited_by: currentUserId || 'system'
-          });
-          // console.log('✅ Invite created for Project Manager');
-        } catch (inviteError) {
-          console.error('❌ Error creating PM invite (member still created):', inviteError);
         }
       }
       
       if (formData.vdcrManager && formData.vdcrManager.trim() !== '') {
-        try {
-          const vdcrContact = vdcrManagerContacts[formData.vdcrManager];
-          let vdcrEmail = vdcrContact?.email;
-          
-          // Only generate email if we don't have contact info
-          if (!vdcrEmail || !vdcrEmail.includes('@')) {
-            if (formData.vdcrManager.includes('@') && !vdcrContact) {
-              vdcrEmail = formData.vdcrManager;
-            } else if (!vdcrContact) {
-              vdcrEmail = `${formData.vdcrManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-            }
+        const { email: vdcrEmail } = await resolveManagerEmail(formData.vdcrManager, 'vdcr_manager');
+        if (vdcrEmail && firmId) {
+          try {
+            await fastAPI.createInvite({
+              email: vdcrEmail,
+              full_name: formData.vdcrManager,
+              role: 'vdcr_manager',
+              firm_id: firmId,
+              project_id: projectId,
+              invited_by: currentUserId || 'system'
+            });
+          } catch (inviteError) {
+            console.error('❌ Error creating VDCR invite:', inviteError);
           }
-          
-          // Prevent duplicate @company.com
-          if (vdcrEmail && vdcrEmail.includes('@company.com@')) {
-            vdcrEmail = vdcrEmail.replace('@company.com@', '@company.com');
-          }
-          
-          // console.log('📧 Creating invite for VDCR Manager...');
-          await fastAPI.createInvite({
-            email: vdcrEmail,
-            full_name: formData.vdcrManager,
-            role: 'vdcr_manager',
-            firm_id: firmId || '',
-            project_id: projectId,
-            invited_by: currentUserId || 'system'
-          });
-          // console.log('✅ Invite created for VDCR Manager');
-        } catch (inviteError) {
-          console.error('❌ Error creating VDCR invite (member still created):', inviteError);
         }
       }
       
@@ -3589,71 +3461,40 @@ Industry: Petrochemical`;
       console.error('❌ Error adding team members (project still created):', teamError);
       console.error('❌ Team error details:', teamError.response?.data || teamError.message);
       
-      // Try to add team members with minimal data
+      // Fallback: try to add team members only when we can resolve a valid saved email (no @company.com)
       try {
-        // console.log('🔄 Trying to add team members with minimal data...');
-        
+        const projId = Array.isArray(createdProject) && createdProject.length > 0 ? createdProject[0].id : (createdProject as any)?.id;
+        if (!projId) return;
         if (formData.projectManager && formData.projectManager.trim() !== '') {
-          const pmContact = projectManagerContacts[formData.projectManager];
-          let pmEmail = pmContact?.email;
-          if (!pmEmail || !pmEmail.includes('@')) {
-            if (formData.projectManager.includes('@') && !pmContact) {
-              pmEmail = formData.projectManager;
-            } else if (!pmContact) {
-              pmEmail = `${formData.projectManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-            }
+          const { email: pmEmail, phone: pmPhone } = await resolveManagerEmail(formData.projectManager, 'project_manager');
+          if (pmEmail) {
+            await fastAPI.createProjectMember({
+              project_id: projId,
+              name: formData.projectManager,
+              email: pmEmail,
+              phone: pmPhone || '',
+              role: 'project_manager',
+              status: 'active',
+              access_level: 'editor'
+            });
           }
-          // Prevent duplicate @company.com
-          if (pmEmail && pmEmail.includes('@company.com@')) {
-            pmEmail = pmEmail.replace('@company.com@', '@company.com');
-          }
-          
-          const minimalProjectManagerData = {
-            project_id: createdProject.id,
-            name: formData.projectManager,
-            email: pmEmail || `${formData.projectManager.replace(/\s+/g, '.').toLowerCase()}@company.com`,
-            role: 'project_manager',
-            status: 'active',
-            access_level: 'editor'
-          };
-          
-          // console.log('👥 Minimal Project Manager data:', minimalProjectManagerData);
-          await fastAPI.createProjectMember(minimalProjectManagerData);
-          // console.log('✅ Project Manager added with minimal data');
         }
-        
         if (formData.vdcrManager && formData.vdcrManager.trim() !== '') {
-          const vdcrContact = vdcrManagerContacts[formData.vdcrManager];
-          let vdcrEmail = vdcrContact?.email;
-          if (!vdcrEmail || !vdcrEmail.includes('@')) {
-            if (formData.vdcrManager.includes('@') && !vdcrContact) {
-              vdcrEmail = formData.vdcrManager;
-            } else if (!vdcrContact) {
-              vdcrEmail = `${formData.vdcrManager.replace(/\s+/g, '.').toLowerCase()}@company.com`;
-            }
+          const { email: vdcrEmail, phone: vdcrPhone } = await resolveManagerEmail(formData.vdcrManager, 'vdcr_manager');
+          if (vdcrEmail) {
+            await fastAPI.createProjectMember({
+              project_id: projId,
+              name: formData.vdcrManager,
+              email: vdcrEmail,
+              phone: vdcrPhone || '',
+              role: 'vdcr_manager',
+              status: 'active',
+              access_level: 'editor'
+            });
           }
-          // Prevent duplicate @company.com
-          if (vdcrEmail && vdcrEmail.includes('@company.com@')) {
-            vdcrEmail = vdcrEmail.replace('@company.com@', '@company.com');
-          }
-          
-          const minimalVdcrManagerData = {
-            project_id: createdProject.id,
-            name: formData.vdcrManager,
-            email: vdcrEmail || `${formData.vdcrManager.replace(/\s+/g, '.').toLowerCase()}@company.com`,
-            role: 'vdcr_manager',
-            status: 'active',
-            access_level: 'editor'
-          };
-          
-          // console.log('👥 Minimal VDCR Manager data:', minimalVdcrManagerData);
-          await fastAPI.createProjectMember(minimalVdcrManagerData);
-          // console.log('✅ VDCR Manager added with minimal data');
         }
-        
-        // console.log('✅ Team members added successfully with minimal data');
       } catch (minimalError) {
-        console.error('❌ Even minimal data failed:', minimalError);
+        console.error('❌ Fallback team member add failed:', minimalError);
       }
     }
     
@@ -3720,7 +3561,7 @@ Industry: Petrochemical`;
       {/* Progress Bar */}
       <div className="w-full bg-gray-200 rounded-full h-2 sm:h-3 overflow-hidden">
         <div 
-          className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-700 ease-out"
+          className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-700 ease-out"
           style={{ width: `${getStepProgress()}%` }}
         />
       </div>
@@ -3732,7 +3573,7 @@ Industry: Petrochemical`;
             key={index}
             className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full transition-all duration-300 ${
               index + 1 <= currentStep 
-                ? 'bg-gradient-to-r from-blue-500 to-purple-600 scale-110' 
+                ? 'bg-gradient-to-r from-blue-500 to-blue-600 scale-110' 
                 : 'bg-gray-300'
             }`}
           />
@@ -4066,7 +3907,7 @@ Industry: Petrochemical`;
                                    (newEntries[`${field}_email`] && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEntries[`${field}_email`])) ||
                                    (newEntries[`${field}_phone`] && !/^[0-9]{10}$/.test(newEntries[`${field}_phone`]))}
                         >
-                          {field === 'projectManager' ? 'Add Project Manager' : 'Add VDCR Manager'}
+                          {field === 'projectManager' ? 'Add Project Manager' : 'Add Documentation Manager'}
                         </Button>
                         <Button
                           type="button"
@@ -4118,32 +3959,6 @@ Industry: Petrochemical`;
 
   const renderStep1 = () => (
     <div className={`space-y-6 transition-all duration-300 ${isAnimating ? 'opacity-0 transform translate-x-4' : 'opacity-100 transform translate-x-0'}`}>
-      {/* Smart Document Upload */}
-      <div className="space-y-3 sm:space-y-4">
-        <div className="flex items-center space-x-2 sm:space-x-3 mb-3 sm:mb-4">
-          <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600 flex-shrink-0" />
-          <h4 className="text-base sm:text-lg font-semibold text-gray-800">Smart Document Upload</h4>
-        </div>
-        
-        <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-3 sm:p-4">
-          <div className="space-y-2 sm:space-y-3">
-            <Label htmlFor="smartDocument" className="text-xs sm:text-sm font-medium text-gray-700">
-              Upload Project Document (PDF, Word, Excel) - Auto-fill Form
-            </Label>
-            <Input
-              id="smartDocument"
-              type="file"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
-              onChange={(e) => handleSmartDocumentUpload(e.target.files?.[0] || null)}
-              className="text-xs sm:text-sm border-purple-300 focus:border-purple-500 focus:ring-purple-500 transition-all duration-200 h-8 sm:h-10"
-            />
-            <p className="text-[10px] sm:text-xs text-gray-600">
-              Upload any project document and we'll automatically extract and fill form fields for you!
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Project Information */}
       <div className="space-y-3 sm:space-y-4">
         <div className="flex items-center space-x-2 sm:space-x-3 mb-3 sm:mb-4">
@@ -4260,8 +4075,8 @@ Industry: Petrochemical`;
 
           {renderAccordionField(
             'vdcrManager',
-            'VDCR Manager *',
-            'Select VDCR Manager',
+            'Documentation Manager *',
+            'Select Documentation Manager',
             formData.vdcrManager,
             (value) => handleInputChange('vdcrManager', value)
           )}
@@ -4304,7 +4119,7 @@ Industry: Petrochemical`;
       {/* Scope of Work */}
       <div className="space-y-3 sm:space-y-4">
         <div className="flex items-center space-x-2 sm:space-x-3 mb-3 sm:mb-4">
-          <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600 flex-shrink-0" />
+          <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600 flex-shrink-0" />
           <h4 className="text-base sm:text-lg font-semibold text-gray-800">Scope of Work</h4>
         </div>
         
@@ -4359,9 +4174,11 @@ Industry: Petrochemical`;
             <Input
               id="unpricedPOFile"
               type="file"
-              onChange={(e) => handleFileUpload('unpricedPOFile', e.target.files?.[0] || null)}
+              multiple
+              onChange={(e) => handleFileUpload('unpricedPOFile', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-9 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
             {/* Display existing Unpriced PO documents */}
             {isEditMode && existingDocuments.unpricedPODocuments.length > 0 && (
               <div className="mt-2 p-2 sm:p-3 bg-blue-50 border border-blue-200 rounded-md">
@@ -4404,9 +4221,11 @@ Industry: Petrochemical`;
             <Input
               id="designInputsPID"
               type="file"
-              onChange={(e) => handleFileUpload('designInputsPID', e.target.files?.[0] || null)}
+              multiple
+              onChange={(e) => handleFileUpload('designInputsPID', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-8 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
             {/* Display existing Design Inputs documents */}
             {isEditMode && existingDocuments.designInputsDocuments.length > 0 && (
               <div className="mt-2 p-2 sm:p-3 bg-green-50 border border-green-200 rounded-md">
@@ -4449,23 +4268,25 @@ Industry: Petrochemical`;
             <Input
               id="clientReferenceDoc"
               type="file"
-              onChange={(e) => handleFileUpload('clientReferenceDoc', e.target.files?.[0] || null)}
+              multiple
+              onChange={(e) => handleFileUpload('clientReferenceDoc', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-8 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
             {/* Display existing Client Reference documents */}
             {isEditMode && existingDocuments.clientReferenceDocuments.length > 0 && (
-              <div className="mt-2 p-2 sm:p-3 bg-purple-50 border border-purple-200 rounded-md">
-                <p className="text-xs sm:text-sm font-medium text-purple-800 mb-1.5 sm:mb-2">Existing Documents:</p>
+              <div className="mt-2 p-2 sm:p-3 bg-blue-50 border border-blue-200 rounded-md">
+                <p className="text-xs sm:text-sm font-medium text-blue-800 mb-1.5 sm:mb-2">Existing Documents:</p>
                 <div className="space-y-1">
                   {existingDocuments.clientReferenceDocuments.map((doc: any, index: number) => (
                     <div key={doc.id || `client-${index}`} className="flex items-center justify-between text-xs sm:text-sm gap-2">
-                      <span className="text-purple-700 truncate flex-1 min-w-0">{doc.name || 'Document'}</span>
+                      <span className="text-blue-700 truncate flex-1 min-w-0">{doc.name || 'Document'}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <a
                           href={doc.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-purple-600 hover:text-purple-800 underline"
+                          className="text-blue-600 hover:text-blue-800 underline"
                         >
                           View
                         </a>
@@ -4495,9 +4316,10 @@ Industry: Petrochemical`;
               id="otherDocuments"
               type="file"
               multiple
-              onChange={(e) => handleFileUpload('otherDocuments', e.target.files ? Array.from(e.target.files) : null)}
+              onChange={(e) => handleFileUpload('otherDocuments', e.target.files && e.target.files.length ? Array.from(e.target.files) : null)}
               className="text-xs sm:text-sm border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 h-8 sm:h-10"
             />
+            <p className="text-xs text-gray-500">You can select multiple files at once</p>
             {/* Display existing Other documents */}
             {isEditMode && existingDocuments.otherDocuments.length > 0 && (
               <div className="mt-2 p-2 sm:p-3 bg-orange-50 border border-orange-200 rounded-md">
@@ -4581,6 +4403,42 @@ Industry: Petrochemical`;
         <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600 flex-shrink-0" />
         <h4 className="text-base sm:text-lg font-semibold text-gray-800">Equipment Information</h4>
       </div>
+
+      {/* Bulk upload by Excel */}
+      <Card className="p-4 sm:p-5 bg-blue-50/50 border-blue-200">
+        <div className="flex items-center space-x-2 sm:space-x-3 mb-3">
+          <FileSpreadsheet className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600 flex-shrink-0" />
+          <h5 className="text-base sm:text-lg font-semibold text-gray-800">Bulk upload by Excel</h5>
+        </div>
+        <p className="text-xs sm:text-sm text-gray-600 mb-4">
+          Download the sample template, fill in your equipment (8 columns: Sr. No., Equipment Type, Tag No., Job No., Equipment Title are mandatory; Size, Material, Design Code are optional), then upload the file.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={downloadEquipmentBulkTemplate}
+            className="border-blue-300 text-blue-700 hover:bg-blue-100 hover:text-blue-800"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Download sample template
+          </Button>
+          <div className="flex items-center gap-2">
+            <Input
+              ref={equipmentBulkInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) parseEquipmentBulkExcel(file);
+              }}
+              className="text-xs sm:text-sm border-blue-200 max-w-[200px] sm:max-w-[240px]"
+            />
+            <span className="text-xs text-gray-500">.xlsx or .xls</span>
+          </div>
+        </div>
+      </Card>
 
       {/* Equipment Types Selection */}
       <div className="space-y-3 sm:space-y-4">
@@ -4867,10 +4725,10 @@ Industry: Petrochemical`;
           </div>
           <p className="text-blue-700 text-sm mt-1">
             {formData.projectManager && formData.vdcrManager 
-              ? `${formData.projectManager} (Project Manager) and ${formData.vdcrManager} (VDCR Manager) have been added to the project team. Check the Settings tab to see them.`
+              ? `${formData.projectManager} (Project Manager) and ${formData.vdcrManager} (Documentation Manager) have been added to the project team. Check the Settings tab to see them.`
               : formData.projectManager 
                 ? `${formData.projectManager} (Project Manager) has been added to the project team. Check the Settings tab to see them.`
-                : `${formData.vdcrManager} (VDCR Manager) has been added to the project team. Check the Settings tab to see them.`
+                : `${formData.vdcrManager} (Documentation Manager) has been added to the project team. Check the Settings tab to see them.`
             }
           </p>
         </div>
@@ -4906,7 +4764,7 @@ Industry: Petrochemical`;
             onSubmit(createdProject);
             onClose();
           }}
-          className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+          className="px-8 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
         >
           <CheckCircle size={20} className="mr-2" />
            {isEditMode ? 'Done' : 'Done'}
@@ -5061,7 +4919,7 @@ Industry: Petrochemical`;
                     <Button 
                       type="button" 
                       onClick={nextStep} 
-                      className="flex-1 sm:flex-initial px-4 sm:px-8 py-2 text-xs sm:text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+                      className="flex-1 sm:flex-initial px-4 sm:px-8 py-2 text-xs sm:text-sm bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
                     >
                       <span className="whitespace-nowrap">Next Step</span>
                       <ChevronRight size={14} className="sm:w-4 sm:h-4 ml-1 sm:ml-2" />

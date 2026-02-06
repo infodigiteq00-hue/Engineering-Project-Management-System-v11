@@ -24,6 +24,7 @@ interface UnifiedProjectViewProps {
   onEditProject?: (projectId: string) => void;
   onDeleteProject?: (projectId: string) => void;
   onCompleteProject?: (projectId: string) => void;
+  onDocumentDeleted?: (projectId: string, documentId: string, documentType: 'unpriced_po_documents' | 'design_inputs_documents' | 'client_reference_documents' | 'other_documents') => void;
 }
 
 const UnifiedProjectView = ({ 
@@ -37,7 +38,8 @@ const UnifiedProjectView = ({
   userRole = "",
   onEditProject,
   onDeleteProject,
-  onCompleteProject
+  onCompleteProject,
+  onDocumentDeleted
 }: UnifiedProjectViewProps) => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -70,7 +72,7 @@ const UnifiedProjectView = ({
   const [vdcrSearchQuery, setVdcrSearchQuery] = useState("");
   const [equipmentSearchQuery, setEquipmentSearchQuery] = useState("");
 
-  // VDCR Overview states
+  // Documentation Overview states
   const [selectedVDCRStatus, setSelectedVDCRStatus] = useState('approved');
 
   // Team connections state - removed as not needed
@@ -361,10 +363,10 @@ const UnifiedProjectView = ({
   const getDataAccessByRole = (role) => {
     const roleAccess = {
       'firm_admin': ['Full Company Access', 'Can Edit All Data', 'Manage All Projects'],
-      'project_manager': ['Full Project Access', 'Can Edit All Data', 'Cannot Edit VDCR'],
-      'vdcr_manager': ['VDCR Tab Access', 'Can Edit VDCR', 'VDCR Birdview', 'VDCR Logs'],
-      'design_engineer': ['Assigned Equipment Only', 'Can Add Progress Images', 'Can Add Progress Entries', 'Access to VDCR & Other Tabs', 'No Access to Settings & Project Details'],
-      'quality_inspector': ['Assigned Equipment Only', 'Read-Only Access', 'Cannot Edit Data', 'Access to VDCR & Other Tabs', 'No Access to Settings & Project Details'],
+      'project_manager': ['Full Project Access', 'Can Edit All Data', 'Cannot Edit Documentation'],
+      'vdcr_manager': ['Documentation Tab Access', 'Can Edit Documentation', 'Documentation Birdview', 'Documentation Logs'],
+      'design_engineer': ['Assigned Equipment Only', 'Can Add Progress Images', 'Can Add Progress Entries', 'Access to Documentation & Other Tabs', 'No Access to Settings & Project Details'],
+      'quality_inspector': ['Assigned Equipment Only', 'Read-Only Access', 'Cannot Edit Data', 'Access to Documentation & Other Tabs', 'No Access to Settings & Project Details'],
       'welder': ['Assigned Equipment Only', 'Read-Only Access', 'Cannot Edit Data'],
       'viewer': ['Read-Only Access', 'Cannot Edit Data']
     };
@@ -437,11 +439,11 @@ const UnifiedProjectView = ({
       name: "project_manager",
       displayName: "Project Manager",
       permissions: ["view", "edit", "delete", "manage_team", "approve_vdcr", "manage_equipment"],
-      color: "bg-purple-100 text-purple-800"
+      color: "bg-blue-100 text-blue-800"
     },
     {
       name: "vdcr_manager",
-      displayName: "VDCR Manager",
+      displayName: "Documentation Manager",
       permissions: ["view", "edit", "approve_vdcr", "manage_vdcr"],
       color: "bg-teal-100 text-teal-800"
     },
@@ -486,7 +488,7 @@ const UnifiedProjectView = ({
     { key: "edit", label: "Edit" },
     { key: "delete", label: "Delete" },
     { key: "manage_team", label: "Manage Team" },
-    { key: "approve_vdcr", label: "Approve VDCR" },
+    { key: "approve_vdcr", label: "Approve Documentation" },
     { key: "manage_equipment", label: "Manage Equipment" },
     { key: "comment", label: "Comment" }
   ];
@@ -495,7 +497,7 @@ const UnifiedProjectView = ({
   const mapRoleToDisplay = (dbRole: string): string => {
     const roleMap: { [key: string]: string } = {
       'project_manager': 'Project Manager',
-      'vdcr_manager': 'VDCR Manager',
+      'vdcr_manager': 'Documentation Manager',
       'editor': 'Editor',
       'viewer': 'Viewer'
     };
@@ -584,7 +586,7 @@ const UnifiedProjectView = ({
     }));
   };
 
-  // VDCR Overview functions
+  // Documentation Overview functions
   const calculateVDCRStats = () => {
     // Use actual VDCR records for Birdview stats
     const records = vdcrDocuments || [];
@@ -627,7 +629,7 @@ const UnifiedProjectView = ({
     const vdcrData = logs.map(log => {
       const documentName = log.vdcr_record?.document_name || 
                           log.metadata?.documentName || 
-                          'VDCR Activity';
+                          'Documentation Activity';
       let status = 'Activity';
       if (log.activity_type === 'vdcr_status_changed') {
         status = log.new_value === 'approved' ? 'Approved' :
@@ -656,7 +658,7 @@ const UnifiedProjectView = ({
       };
     });
 
-    exportToExcel(vdcrData, 'VDCR_Logs');
+    exportToExcel(vdcrData, 'Documentation_Logs');
   };
 
   const exportEquipmentLogsToExcel = () => {
@@ -715,7 +717,7 @@ const UnifiedProjectView = ({
       // Map frontend role names to database role values
       const roleMapping: { [key: string]: string } = {
         'Project Manager': 'project_manager', 
-        'VDCR Manager': 'vdcr_manager', 
+        'Documentation Manager': 'vdcr_manager', 
         'Editor': 'editor',
         'Viewer': 'viewer'
       };
@@ -918,7 +920,7 @@ const UnifiedProjectView = ({
                 // Map display role to equipment_team_positions role (only accepts 'editor' or 'viewer')
                 const equipmentRoleMap: { [key: string]: 'editor' | 'viewer' } = {
                   'Project Manager': 'editor',
-                  'VDCR Manager': 'editor',
+                  'Documentation Manager': 'editor',
                   'Editor': 'editor',
                   'Viewer': 'viewer'
                 };
@@ -978,7 +980,7 @@ const UnifiedProjectView = ({
     // Map database role values back to display names for the dropdown
     const roleDisplayMapping: { [key: string]: string } = {
       'project_manager': 'Project Manager',
-      'vdcr_manager': 'VDCR Manager', 
+      'vdcr_manager': 'Documentation Manager', 
       'editor': 'Editor',
       'viewer': 'Viewer'
     };
@@ -1009,7 +1011,7 @@ const UnifiedProjectView = ({
       // Map frontend role names to database role values
       const roleMapping: { [key: string]: string } = {
         'Project Manager': 'project_manager',
-        'VDCR Manager': 'vdcr_manager', 
+        'Documentation Manager': 'vdcr_manager', 
         'Editor': 'editor',
         'Viewer': 'viewer'
       };
@@ -1102,11 +1104,11 @@ const UnifiedProjectView = ({
 
   const getRoleColor = (role) => {
     const roleColors = {
-      'project_manager': 'bg-purple-100 text-purple-800',
+      'project_manager': 'bg-blue-100 text-blue-800',
       'vdcr_manager': 'bg-teal-100 text-teal-800',
       'editor': 'bg-blue-100 text-blue-800',
       'viewer': 'bg-gray-100 text-gray-800',
-      'design_engineer': 'bg-purple-100 text-purple-800',
+      'design_engineer': 'bg-blue-100 text-blue-800',
       'quality_engineer': 'bg-green-100 text-green-800',
       'client_representative': 'bg-orange-100 text-orange-800',
       'firm_admin': 'bg-red-100 text-red-800'
@@ -1120,7 +1122,7 @@ const UnifiedProjectView = ({
       edit: "Edit",
       delete: "Delete",
       manage_team: "Manage Team",
-      approve_vdcr: "Approve VDCR",
+      approve_vdcr: "Approve Documentation",
       manage_equipment: "Manage Equipment",
       comment: "Comment"
     };
@@ -1196,15 +1198,15 @@ const UnifiedProjectView = ({
               </div>
             </div>
             
-            <div className="bg-white rounded-lg p-4 border border-gray-200 hover:border-purple-300 transition-colors">
+            <div className="bg-white rounded-lg p-4 border border-gray-200 hover:border-blue-300 transition-colors">
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs sm:text-sm font-medium text-gray-600 mb-2">VDCR Documents</p>
+                  <p className="text-xs sm:text-sm font-medium text-gray-600 mb-2">Project Documents</p>
                   <div className="text-xl sm:text-2xl font-semibold text-gray-900 mb-1">{vdcrDocuments?.length || 0}</div>
                   <p className="text-xs text-gray-500">Total Records</p>
                 </div>
-                <div className="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                  <FileText size={18} className="text-purple-600" />
+                <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <FileText size={18} className="text-blue-600" />
                 </div>
               </div>
             </div>
@@ -1224,71 +1226,71 @@ const UnifiedProjectView = ({
           </div>
         </div>
 
-        {/* Unified Tabbed Interface */}
+        {/* Unified Tabbed Interface - tabs align with content width, horizontally scrollable on small screens */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="overflow-x-auto overflow-y-hidden xl:overflow-x-visible xl:overflow-y-visible mb-16 scroll-smooth p-1">
-            <TabsList className={`flex xl:grid min-w-max xl:w-full bg-transparent rounded-2xl p-2 ${(userRole === 'vdcr_manager' || userRole === 'editor') ? 'xl:grid-cols-4' : userRole === 'viewer' ? 'xl:grid-cols-5' : 'xl:grid-cols-6'} gap-2 flex-nowrap`}>
+          <div className="w-full overflow-x-auto overflow-y-hidden xl:overflow-x-visible xl:overflow-y-visible mb-16 scroll-smooth p-1 scrollbar-hide">
+            <TabsList className={`flex xl:grid flex-nowrap min-w-max xl:min-w-0 xl:w-full bg-transparent rounded-2xl p-2 gap-2 ${(userRole === 'vdcr_manager' || userRole === 'editor') ? 'xl:grid-cols-4' : userRole === 'viewer' ? 'xl:grid-cols-5' : 'xl:grid-cols-6'}`}>
             <TabsTrigger 
               value="equipment" 
-              className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-blue-600 data-[state=active]:hover:to-blue-700 flex-shrink-0"
+              className="flex items-center justify-center gap-2 sm:gap-3 px-2 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-blue-600 data-[state=active]:hover:to-blue-700 flex-shrink-0"
             >
               <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
                 <Building size={20} className="text-blue-600 data-[state=active]:text-white" />
               </div>
-              <span>Equipment</span>
+              <span className="truncate">Equipment</span>
             </TabsTrigger>
             
             <TabsTrigger 
               value="vdcr" 
-              className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-green-500 data-[state=active]:to-green-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-green-600 data-[state=active]:hover:to-green-700 flex-shrink-0"
+              className="flex items-center justify-center gap-2 sm:gap-3 px-2 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-green-500 data-[state=active]:to-green-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-green-600 data-[state=active]:hover:to-green-700 flex-shrink-0"
             >
               <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
                 <FileText size={20} className="text-green-600 data-[state=active]:text-white" />
               </div>
-              <span>VDCR</span>
+              <span className="truncate">Documentation</span>
             </TabsTrigger>
             
             <TabsTrigger 
               value="vdcr-overview" 
-              className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-teal-500 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-teal-600 data-[state=active]:hover:to-teal-700 flex-shrink-0"
+              className="flex items-center justify-center gap-2 sm:gap-3 px-2 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-teal-500 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-teal-600 data-[state=active]:hover:to-teal-700 flex-shrink-0"
             >
               <div className="w-8 h-8 bg-teal-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
                 <BarChart3 size={20} className="text-teal-600 data-[state=active]:text-white" />
               </div>
-              <span>VDCR Birdview</span>
+              <span className="truncate">Docs Birdview</span>
             </TabsTrigger>
             
             <TabsTrigger 
               value="progress-logs" 
-              className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-purple-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-purple-600 data-[state=active]:hover:to-purple-700 flex-shrink-0"
+              className="flex items-center justify-center gap-2 sm:gap-3 px-2 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-blue-600 data-[state=active]:hover:to-blue-700 flex-shrink-0"
             >
-              <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
-                <TrendingUp size={20} className="text-purple-600 data-[state=active]:text-white" />
+              <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
+                <TrendingUp size={20} className="text-blue-600 data-[state=active]:text-white" />
               </div>
-              <span>Project Chronology</span>
+              <span className="truncate">Project Chronology</span>
             </TabsTrigger>
             
             {userRole !== 'vdcr_manager' && userRole !== 'editor' && (
               <TabsTrigger 
                 value="project-details" 
-                className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-orange-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-orange-600 data-[state=active]:hover:to-orange-700 flex-shrink-0"
+                className="flex items-center justify-center gap-2 sm:gap-3 px-2 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-orange-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-orange-600 data-[state=active]:hover:to-orange-700 flex-shrink-0"
               >
                 <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
                   <Users size={20} className="text-orange-600 data-[state=active]:text-white" />
                 </div>
-                <span>Project Details</span>
+                <span className="truncate">Project Details</span>
               </TabsTrigger>
             )}
 
             {userRole !== 'vdcr_manager' && userRole !== 'editor' && userRole !== 'viewer' && (
               <TabsTrigger 
                 value="settings" 
-                className="flex items-center gap-3 px-4 py-4 text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-gray-500 data-[state=active]:to-gray-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-gray-600 data-[state=active]:hover:to-gray-700 flex-shrink-0"
+                className="flex items-center justify-center gap-2 sm:gap-3 px-2 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-gray-500 data-[state=active]:to-gray-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-gray-600 data-[state=active]:hover:to-gray-700 flex-shrink-0"
               >
                 <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center data-[state=active]:bg-white/20 data-[state=active]:text-white">
                   <Settings size={20} className="text-gray-600 data-[state=active]:text-white" />
                 </div>
-                <span>Settings</span>
+                <span className="truncate">Settings</span>
               </TabsTrigger>
             )}
             </TabsList>
@@ -1332,9 +1334,9 @@ const UnifiedProjectView = ({
               <div className="bg-gradient-to-r from-green-50 to-green-100 px-3 sm:px-6 py-3 sm:py-4 border-b border-green-200 min-w-0">
                 <h2 className="text-base sm:text-lg md:text-xl font-semibold text-green-800 flex items-center gap-2 flex-wrap">
                   <FileText size={20} className="sm:w-6 sm:h-6 text-green-600 flex-shrink-0" />
-                  <span className="break-words">VDCR Management</span>
+                  <span className="break-words">Documentation Management</span>
                 </h2>
-                <p className="text-green-600 text-xs sm:text-sm mt-1 break-words">Handle all VDCR records and approvals</p>
+                <p className="text-green-600 text-xs sm:text-sm mt-1 break-words">Handle all documentation records and approvals</p>
               </div>
               <div className="p-3 sm:p-6">
                 <ProjectsVDCR
@@ -1348,29 +1350,29 @@ const UnifiedProjectView = ({
             </div>
           </TabsContent>
 
-          {/* VDCR Overview Tab */}
+          {/* Documentation Overview Tab */}
           <TabsContent value="vdcr-overview" className="space-y-4 sm:space-y-6 mt-6 sm:mt-8">
             <div className="bg-white rounded-2xl shadow-lg border-2 border-gray-200 overflow-hidden">
               <div className="bg-gradient-to-r from-teal-50 to-teal-100 px-4 sm:px-6 py-3 sm:py-4 border-b border-teal-200">
                 <h2 className="text-lg sm:text-xl font-semibold text-teal-800 flex items-center gap-2">
                   <BarChart3 size={20} className="sm:w-6 sm:h-6 text-teal-600" />
-                  VDCR Overview
+                  Documentation Overview
                 </h2>
-                <p className="text-teal-600 text-xs sm:text-sm mt-1">Summary and key metrics for VDCR documents</p>
+                <p className="text-teal-600 text-xs sm:text-sm mt-1">Summary and key metrics for documentation</p>
               </div>
               <div className="p-4 sm:p-6">
                 <div className="space-y-4 sm:space-y-6">
-                  {/* VDCR Status Overview with Tabs */}
+                  {/* Documentation Status Overview with Tabs */}
                   <div className="mb-4 sm:mb-6">
                     <h2 className="text-lg sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center">
                       <FileText size={20} className="sm:w-6 sm:h-6 mr-2 sm:mr-3 text-blue-600" />
-                      VDCR Status Overview
+                      Documentation Status Overview
                     </h2>
                     
                     {/* VDCR Status Tabs */}
                     <div className="bg-white border border-gray-200 rounded-lg">
                       <div className="border-b border-gray-200">
-                        <nav className="flex space-x-4 sm:space-x-8 px-3 sm:px-6 overflow-x-auto scrollbar-hide" aria-label="VDCR Status Tabs">
+                        <nav className="flex space-x-4 sm:space-x-8 px-3 sm:px-6 overflow-x-auto scrollbar-hide" aria-label="Documentation Status Tabs">
                           <button
                             onClick={() => setSelectedVDCRStatus('approved')}
                             className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors whitespace-nowrap flex-shrink-0 ${selectedVDCRStatus === 'approved'
@@ -1603,12 +1605,12 @@ const UnifiedProjectView = ({
           {/* Progress Logs Tab */}
           <TabsContent value="progress-logs" className="space-y-4 sm:space-y-6 mt-6 sm:mt-8">
             <div className="bg-white rounded-2xl shadow-lg border-2 border-gray-200 overflow-hidden">
-              <div className="bg-gradient-to-r from-purple-50 to-purple-100 px-4 sm:px-6 py-3 sm:py-4 border-b border-purple-200">
-                <h2 className="text-lg sm:text-xl font-semibold text-purple-800 flex items-center gap-2">
-                  <TrendingUp size={20} className="text-purple-600 sm:w-6 sm:h-6" />
+              <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-4 sm:px-6 py-3 sm:py-4 border-b border-blue-200">
+                <h2 className="text-lg sm:text-xl font-semibold text-blue-800 flex items-center gap-2">
+                  <TrendingUp size={20} className="text-blue-600 sm:w-6 sm:h-6" />
                   Progress Logs
                 </h2>
-                <p className="text-purple-600 text-xs sm:text-sm mt-1">Track project progress updates and milestones</p>
+                <p className="text-blue-600 text-xs sm:text-sm mt-1">Track project progress updates and milestones</p>
               </div>
               <div className="p-4 sm:p-6">
                 {/* Progress Logs Subtabs */}
@@ -1616,36 +1618,36 @@ const UnifiedProjectView = ({
                   <TabsList className={`mb-4 sm:mb-6 bg-transparent rounded-xl p-1 sm:p-2 overflow-x-auto sm:overflow-visible whitespace-nowrap flex sm:grid gap-2 sm:gap-0 ${userRole === 'vdcr_manager' ? 'w-fit sm:grid-cols-1 mx-auto' : 'w-full sm:grid-cols-2'}`}>
                     <TabsTrigger 
                       value="vdcr-logs" 
-                      className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-purple-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-purple-600 data-[state=active]:hover:to-purple-700 group flex-shrink-0"
+                      className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-blue-600 data-[state=active]:hover:to-blue-700 group flex-shrink-0"
                     >
-                      <FileText size={16} className="text-purple-600 group-data-[state=active]:text-white transition-colors duration-200 sm:w-5 sm:h-5" />
-                      VDCR Logs
+                      <FileText size={16} className="text-blue-600 group-data-[state=active]:text-white transition-colors duration-200 sm:w-5 sm:h-5" />
+                      Documentation Logs
                     </TabsTrigger>
                     
                     {userRole !== 'vdcr_manager' && (
                       <TabsTrigger 
                         value="equipment-logs" 
-                        className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-purple-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-purple-600 data-[state=active]:hover:to-purple-700 group flex-shrink-0"
+                        className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold bg-white data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:scale-105 transition-all duration-300 rounded-xl hover:bg-gray-200 data-[state=active]:hover:from-blue-600 data-[state=active]:hover:to-blue-700 group flex-shrink-0"
                       >
-                        <Building size={16} className="text-purple-600 group-data-[state=active]:text-white transition-colors duration-200 sm:w-5 sm:h-5" />
+                        <Building size={16} className="text-blue-600 group-data-[state=active]:text-white transition-colors duration-200 sm:w-5 sm:h-5" />
                         Equipment Logs
                       </TabsTrigger>
                     )}
                   </TabsList>
 
-                  {/* VDCR Logs Subtab */}
+                  {/* Documentation Logs Subtab */}
                   <TabsContent value="vdcr-logs" className="space-y-4 sm:space-y-6">
                     <div className="space-y-4 sm:space-y-6">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <h3 className="text-base sm:text-xl font-semibold text-gray-800 flex items-center gap-2">
-                          <FileText size={18} className="text-purple-600 sm:w-5 sm:h-5" />
-                          VDCR Activity Log
+                          <FileText size={18} className="text-blue-600 sm:w-5 sm:h-5" />
+                          Documentation Activity Log
                         </h3>
                         <Button
                           onClick={exportVDCRLogsToExcel}
                           variant="outline"
                           size="sm"
-                          className="flex items-center gap-1 sm:gap-2 bg-white hover:bg-purple-50 border-purple-200 text-purple-700 hover:text-purple-800 hover:border-purple-300 transition-all duration-200 text-xs sm:text-sm px-3"
+                          className="flex items-center gap-1 sm:gap-2 bg-white hover:bg-blue-50 border-blue-200 text-blue-700 hover:text-blue-800 hover:border-blue-300 transition-all duration-200 text-xs sm:text-sm px-3"
                         >
                           <Download size={14} className="sm:w-4 sm:h-4" />
                           <span className="hidden sm:inline">Export to Excel</span>
@@ -1657,10 +1659,10 @@ const UnifiedProjectView = ({
                       <div className="relative">
                         <input
                           type="text"
-                          placeholder="Search VDCR logs by document, status, or user..."
+                          placeholder="Search documentation logs by document, status, or user..."
                           value={vdcrSearchQuery}
                           onChange={(e) => setVdcrSearchQuery(e.target.value)}
-                          className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pl-9 sm:pl-10 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200"
+                          className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pl-9 sm:pl-10 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                         />
                         <div className="absolute inset-y-0 left-0 pl-2.5 sm:pl-3 flex items-center pointer-events-none">
                           <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1680,7 +1682,7 @@ const UnifiedProjectView = ({
                       </div>
                       
                     <div className="space-y-4">
-                        {/* Filtered VDCR Logs */}
+                        {/* Filtered Documentation Logs */}
                         {(() => {
                           // console.log('📄 UnifiedProjectView: Rendering VDCR logs, vdcrRecords:', {
                           //   length: vdcrRecords?.length || 0,
@@ -1707,7 +1709,7 @@ const UnifiedProjectView = ({
                             // Get document name from metadata or vdcr_record
                             const documentName = log.vdcr_record?.document_name || 
                                                 log.metadata?.documentName || 
-                                                'VDCR Activity';
+                                                'Documentation Activity';
                             
                             return {
                               id: log.id || index + 1,
@@ -1746,7 +1748,7 @@ const UnifiedProjectView = ({
                             return (
                               <div className="text-center py-8 text-gray-500">
                                 <FileText size={32} className="mx-auto mb-2 text-gray-300" />
-                                <p>No VDCR logs match the search criteria.</p>
+                                <p>No documentation logs match the search criteria.</p>
                                 <p className="text-sm text-gray-400 mt-1">Try adjusting your search terms.</p>
                               </div>
                             );
@@ -1760,16 +1762,16 @@ const UnifiedProjectView = ({
                                     log.status === 'Rejected' ? 'bg-red-500' :
                                     log.status === 'Received with Comments' ? 'bg-yellow-500' :
                                     log.status === 'Pending' ? 'bg-blue-500' :
-                                    log.status === 'In Progress' ? 'bg-purple-500' : 'bg-gray-500'
+                                    log.status === 'In Progress' ? 'bg-blue-500' : 'bg-gray-500'
                                   }`}></div>
                                   <div className="flex-1 min-w-0 pr-16 sm:pr-0">
                                     <p className="text-xs sm:text-sm font-medium text-gray-800 truncate">
-                                      {log.activityType === 'vdcr_created' ? 'VDCR Record Created' :
-                                       log.activityType === 'vdcr_field_updated' ? `VDCR ${log.fieldName || 'Field'} Updated` :
-                                       log.activityType === 'vdcr_status_changed' ? `VDCR Status Changed to ${log.status}` :
-                                       log.activityType === 'vdcr_document_uploaded' ? 'VDCR Document Uploaded' :
-                                       log.activityType === 'vdcr_deleted' ? 'VDCR Record Deleted' :
-                                       `VDCR ${log.status}`}
+                                      {log.activityType === 'vdcr_created' ? 'Documentation Record Created' :
+                                       log.activityType === 'vdcr_field_updated' ? `Documentation ${log.fieldName || 'Field'} Updated` :
+                                       log.activityType === 'vdcr_status_changed' ? `Documentation Status Changed to ${log.status}` :
+                                       log.activityType === 'vdcr_document_uploaded' ? 'Documentation Uploaded' :
+                                       log.activityType === 'vdcr_deleted' ? 'Documentation Record Deleted' :
+                                       `Documentation ${log.status}`}
                                     </p>
                                     <p className="text-[11px] sm:text-xs text-gray-500 truncate">{log.document}</p>
                                     
@@ -1803,7 +1805,7 @@ const UnifiedProjectView = ({
                                     log.status === 'Rejected' ? 'bg-red-100 text-red-800 border-red-200' :
                                     log.status === 'Received with Comments' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
                                     log.status === 'Pending' ? 'bg-blue-100 text-blue-800 border-blue-200' :
-                                    log.status === 'In Progress' ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-gray-100 text-gray-800 border-gray-200'
+                                    log.status === 'In Progress' ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-gray-100 text-gray-800 border-gray-200'
                                   }`}>
                                     {log.status}
                                   </div>
@@ -1812,7 +1814,7 @@ const UnifiedProjectView = ({
                                     log.status === 'Rejected' ? 'bg-red-100 text-red-800 border-red-200' :
                                     log.status === 'Received with Comments' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
                                     log.status === 'Pending' ? 'bg-blue-100 text-blue-800 border-blue-200' :
-                                    log.status === 'In Progress' ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-gray-100 text-gray-800 border-gray-200'
+                                    log.status === 'In Progress' ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-gray-100 text-gray-800 border-gray-200'
                                   }`}>
                                     {log.status}
                                   </div>
@@ -1831,14 +1833,14 @@ const UnifiedProjectView = ({
                     <div className="space-y-4 sm:space-y-6">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <h3 className="text-base sm:text-xl font-semibold text-gray-800 flex items-center gap-2">
-                          <Building size={18} className="text-purple-600 sm:w-5 sm:h-5" />
+                          <Building size={18} className="text-blue-600 sm:w-5 sm:h-5" />
                           Equipment Activity Log
                         </h3>
                         <Button
                           onClick={exportEquipmentLogsToExcel}
                           variant="outline"
                           size="sm"
-                          className="flex items-center gap-1 sm:gap-2 bg-white hover:bg-purple-50 border-purple-200 text-purple-700 hover:text-purple-800 hover:border-purple-300 transition-all duration-200 text-xs sm:text-sm px-3"
+                          className="flex items-center gap-1 sm:gap-2 bg-white hover:bg-blue-50 border-blue-200 text-blue-700 hover:text-blue-800 hover:border-blue-300 transition-all duration-200 text-xs sm:text-sm px-3"
                         >
                           <Download size={14} className="sm:w-4 sm:h-4" />
                           <span className="hidden sm:inline">Export to Excel</span>
@@ -1853,7 +1855,7 @@ const UnifiedProjectView = ({
                           placeholder="Search equipment logs by unit, status, or user..."
                           value={equipmentSearchQuery}
                           onChange={(e) => setEquipmentSearchQuery(e.target.value)}
-                          className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pl-9 sm:pl-10 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200"
+                          className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pl-9 sm:pl-10 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                         />
                         <div className="absolute inset-y-0 left-0 pl-2.5 sm:pl-3 flex items-center pointer-events-none">
                           <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2135,7 +2137,7 @@ const UnifiedProjectView = ({
                               'equipment_created': { label: 'Created', color: 'text-green-800', bgColor: 'bg-green-100', borderColor: 'border-green-200', icon: Building },
                               'equipment_updated': { label: 'Updated', color: 'text-blue-800', bgColor: 'bg-blue-100', borderColor: 'border-blue-200', icon: Wrench },
                               'equipment_deleted': { label: 'Deleted', color: 'text-red-800', bgColor: 'bg-red-100', borderColor: 'border-red-200', icon: AlertTriangle },
-                              'progress_image_uploaded': { label: 'Progress Image', color: 'text-purple-800', bgColor: 'bg-purple-100', borderColor: 'border-purple-200', icon: Image },
+                              'progress_image_uploaded': { label: 'Progress Image', color: 'text-blue-800', bgColor: 'bg-blue-100', borderColor: 'border-blue-200', icon: Image },
                               'technical_specs_updated': { label: 'Technical Specs', color: 'text-orange-800', bgColor: 'bg-orange-100', borderColor: 'border-orange-200', icon: Wrench },
                               'technical_section_added': { label: 'Tech Section Added', color: 'text-orange-800', bgColor: 'bg-orange-100', borderColor: 'border-orange-200', icon: Wrench },
                               'document_uploaded': { label: 'Document Added', color: 'text-indigo-800', bgColor: 'bg-indigo-100', borderColor: 'border-indigo-200', icon: FileCheck },
@@ -2272,7 +2274,7 @@ const UnifiedProjectView = ({
                                       {/* Progress Image Added */}
                                       {log.activityType === 'progress_image_uploaded' && (
                                         <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 text-[10px] sm:text-xs md:text-sm text-gray-700 flex-wrap">
-                                          <Image size={12} className="sm:w-[14px] sm:h-[14px] text-purple-600 flex-shrink-0" />
+                                          <Image size={12} className="sm:w-[14px] sm:h-[14px] text-blue-600 flex-shrink-0" />
                                           <span className="flex-shrink-0">New progress image added</span>
                                           {log.metadata?.imageDescription && (
                                             <span className="text-gray-500 truncate">- {log.metadata.imageDescription}</span>
@@ -2403,6 +2405,7 @@ const UnifiedProjectView = ({
                   onEditProject={onEditProject}
                   onDeleteProject={onDeleteProject}
                   onCompleteProject={onCompleteProject}
+                  onDocumentDeleted={onDocumentDeleted}
                 />
               </div>
             </div>
@@ -2531,23 +2534,23 @@ const UnifiedProjectView = ({
                             {member.role === 'project_manager' && (
                               <>
                                 <div className="flex items-center gap-2">
-                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                   <span className="text-xs text-gray-600">Full Project Access</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                   <span className="text-xs text-gray-600">Can Manage All Equipment</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
-                                  <span className="text-xs text-gray-600">Can Approve VDCR</span>
+                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
+                                  <span className="text-xs text-gray-600">Can Approve Documentation</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                   <span className="text-xs text-gray-600">Can Manage Team Members</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full"></div>
+                                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full"></div>
                                   <span className="text-xs text-gray-600">Access to All Tabs</span>
                                 </div>
                               </>
@@ -2556,11 +2559,11 @@ const UnifiedProjectView = ({
                               <>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
-                                  <span className="text-xs text-gray-600">VDCR Management Access</span>
+                                  <span className="text-xs text-gray-600">Documentation Management Access</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
-                                  <span className="text-xs text-gray-600">Can Approve VDCR</span>
+                                  <span className="text-xs text-gray-600">Can Approve Documentation</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
@@ -2568,7 +2571,7 @@ const UnifiedProjectView = ({
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
-                                  <span className="text-xs text-gray-600">Access to VDCR & Equipment Tabs</span>
+                                  <span className="text-xs text-gray-600">Access to Documentation & Equipment Tabs</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-red-500 rounded-full"></div>
@@ -2592,7 +2595,7 @@ const UnifiedProjectView = ({
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                                  <span className="text-xs text-gray-600">Access to VDCR & Other Tabs</span>
+                                  <span className="text-xs text-gray-600">Access to Documentation & Other Tabs</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-red-500 rounded-full"></div>
@@ -2612,7 +2615,7 @@ const UnifiedProjectView = ({
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
-                                  <span className="text-xs text-gray-600">Can View Progress & VDCR</span>
+                                  <span className="text-xs text-gray-600">Can View Progress & Documentation</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 bg-red-500 rounded-full"></div>
@@ -2912,7 +2915,7 @@ const UnifiedProjectView = ({
                     {/* Role & Access Section */}
                     <div className="space-y-3 sm:space-y-4">
                       <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
-                        <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full flex-shrink-0"></div>
+                        <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full flex-shrink-0"></div>
                         <h4 className="text-xs sm:text-sm font-semibold text-gray-800 uppercase tracking-wide">Role & Access Level</h4>
                       </div>
                       
@@ -2926,17 +2929,17 @@ const UnifiedProjectView = ({
                               ...newMember, 
                               role: role,
                               accessLevel: role === 'Project Manager' ? 'project_manager' : 
-                                          role === 'VDCR Manager' ? 'vdcr_manager' : 
+                                          role === 'Documentation Manager' ? 'vdcr_manager' : 
                                           role === 'Editor' ? 'editor' : 'viewer',
                               permissions: role === 'Project Manager' ? ['view', 'edit', 'delete', 'manage_team', 'approve_vdcr', 'manage_equipment'] :
-                                         role === 'VDCR Manager' ? ['view', 'edit', 'approve_vdcr', 'manage_vdcr'] :
+                                         role === 'Documentation Manager' ? ['view', 'edit', 'approve_vdcr', 'manage_vdcr'] :
                                          role === 'Editor' ? ['view', 'edit', 'manage_equipment'] : ['view', 'comment']
                             });
                           }}
                           disabled={isExistingMemberMode}
                           required
                         >
-                          <SelectTrigger className={`w-full h-auto px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200 ${
+                          <SelectTrigger className={`w-full h-auto px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
                             isExistingMemberMode 
                               ? 'bg-gray-100 cursor-not-allowed text-gray-600' 
                               : 'bg-gray-50 hover:bg-white'
@@ -2947,8 +2950,8 @@ const UnifiedProjectView = ({
                             <SelectItem value="Project Manager" className="text-xs sm:text-sm py-2">
                               Project Manager (Full Access)
                             </SelectItem>
-                            <SelectItem value="VDCR Manager" className="text-xs sm:text-sm py-2">
-                              VDCR Manager (VDCR Management)
+                            <SelectItem value="Documentation Manager" className="text-xs sm:text-sm py-2">
+                              Documentation Manager (Documentation Management)
                             </SelectItem>
                             <SelectItem value="Editor" className="text-xs sm:text-sm py-2">
                               Editor (Can Add Progress)
@@ -2961,24 +2964,24 @@ const UnifiedProjectView = ({
                         
                         {/* Role Description with Data Access */}
                         {newMember.role && (
-                          <div className="mt-3 sm:mt-4 p-3 sm:p-4 bg-purple-50 rounded-lg border border-purple-200">
-                            <p className="text-[10px] sm:text-xs text-purple-700 font-medium mb-2 sm:mb-3">Default Data Access for Selected Role:</p>
-                            <div className="text-[10px] sm:text-xs text-purple-700 space-y-1 sm:space-y-2">
+                          <div className="mt-3 sm:mt-4 p-3 sm:p-4 bg-blue-50 rounded-lg border border-blue-200">
+                            <p className="text-[10px] sm:text-xs text-blue-700 font-medium mb-2 sm:mb-3">Default Data Access for Selected Role:</p>
+                            <div className="text-[10px] sm:text-xs text-blue-700 space-y-1 sm:space-y-2">
                               {newMember.role === 'Project Manager' && (
                                 <div className="space-y-1">
                                   <div>• Full Project Access</div>
                                   <div>• Can Manage All Equipment</div>
-                                  <div>• Can Approve VDCR</div>
+                                  <div>• Can Approve Documentation</div>
                                   <div>• Can Manage Team Members</div>
                                   <div>• Access to All Tabs</div>
                                 </div>
                               )}
-                              {newMember.role === 'VDCR Manager' && (
+                              {newMember.role === 'Documentation Manager' && (
                                 <div className="space-y-1">
-                                  <div>• Full VDCR Management Access</div>
-                                  <div>• Can Edit VDCR Documents</div>
-                                  <div>• Access to VDCR Birdview Tab</div>
-                                  <div>• Access to VDCR Logs in Project Chronology</div>
+                                  <div>• Full Documentation Management Access</div>
+                                  <div>• Can Edit Documentation</div>
+                                  <div>• Access to Documentation Birdview Tab</div>
+                                  <div>• Access to Documentation Logs in Project Chronology</div>
                                 </div>
                               )}
                               {newMember.role === 'Editor' && (
@@ -2987,7 +2990,7 @@ const UnifiedProjectView = ({
                                   <div>• Can Add Progress Images</div>
                                   <div>• Can Add Progress Entries</div>
                                   <div>• Cannot Edit Existing Data</div>
-                                  <div>• Access to VDCR & Other Tabs (except Settings & Project Details)</div>
+                                  <div>• Access to Documentation & Other Tabs (except Settings & Project Details)</div>
                                 </div>
                               )}
                               {newMember.role === 'Viewer' && (
@@ -3216,17 +3219,17 @@ const UnifiedProjectView = ({
                                 <div className="space-y-1">
                                   <div>• Full Project Access</div>
                                   <div>• Can Manage All Equipment</div>
-                                  <div>• Can Approve VDCR</div>
+                                  <div>• Can Approve Documentation</div>
                                   <div>• Can Manage Team Members</div>
                                   <div>• Access to All Tabs</div>
                                 </div>
                               )}
-                              {newMember.role === 'VDCR Manager' && (
+                              {newMember.role === 'Documentation Manager' && (
                                 <div className="space-y-1">
-                                  <div>• Full VDCR Management Access</div>
-                                  <div>• Can Edit VDCR Documents</div>
-                                  <div>• Access to VDCR Birdview Tab</div>
-                                  <div>• Access to VDCR Logs in Project Chronology</div>
+                                  <div>• Full Documentation Management Access</div>
+                                  <div>• Can Edit Documentation</div>
+                                  <div>• Access to Documentation Birdview Tab</div>
+                                  <div>• Access to Documentation Logs in Project Chronology</div>
                                 </div>
                               )}
                               {newMember.role === 'Editor' && (
@@ -3235,7 +3238,7 @@ const UnifiedProjectView = ({
                                   <div>• Can Add Progress Images</div>
                                   <div>• Can Add Progress Entries</div>
                                   <div>• Cannot Edit Existing Data</div>
-                                  <div>• Access to VDCR & Other Tabs (except Settings & Project Details)</div>
+                                  <div>• Access to Documentation & Other Tabs (except Settings & Project Details)</div>
                                 </div>
                               )}
                               {newMember.role === 'Viewer' && (

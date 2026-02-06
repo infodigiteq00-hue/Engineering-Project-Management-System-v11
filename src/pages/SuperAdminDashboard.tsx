@@ -507,7 +507,7 @@ const SuperAdminDashboard = () => {
   const getPlanBadgeColor = (plan: string) => {
     switch (plan) {
       case 'premium':
-        return 'bg-purple-600 text-white';
+        return 'bg-blue-600 text-white';
       case 'enterprise':
         return 'bg-indigo-600 text-white';
       case 'basic':

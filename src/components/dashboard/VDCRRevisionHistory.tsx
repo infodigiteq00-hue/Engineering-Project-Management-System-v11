@@ -17,6 +17,8 @@ interface RevisionEvent {
   days_elapsed?: number;
   notes?: string;
   document_url?: string;
+  has_notable_change?: boolean;
+  notable_change_title?: string | null;
   created_at?: string; // For tiebreaker when event_date is same
   created_by_user?: {
     full_name?: string;
@@ -53,7 +55,10 @@ const VDCRRevisionHistory: React.FC<VDCRRevisionHistoryProps> = ({
   const [events, setEvents] = useState<RevisionEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [latestRevision, setLatestRevision] = useState<string | undefined>(currentRevision);
-  const [projectData, setProjectData] = useState<{ sales_order_date?: string } | null>(null);
+  const [projectData, setProjectData] = useState<{ 
+    sales_order_date?: string; 
+    vdcr_cycle_time_rev_00?: number | null;
+  } | null>(null);
 
   useEffect(() => {
     if (isOpen && vdcrRecordId) {
@@ -148,6 +153,13 @@ const VDCRRevisionHistory: React.FC<VDCRRevisionHistoryProps> = ({
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  };
+
+  // Add days to a YYYY-MM-DD date string, return YYYY-MM-DD
+  const addDaysToDate = (dateStr: string, days: number): string => {
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
   };
 
   // SIMPLE: Calculate days between two YYYY-MM-DD date strings
@@ -279,11 +291,19 @@ const VDCRRevisionHistory: React.FC<VDCRRevisionHistoryProps> = ({
         docUrl = documentUrl;
       }
 
-      // Get target submission date from previous revision's received event
-      // This will be shown under "Sent to Client" for the current revision
+      // Get target/expected submission date
+      // Rev 00: expected = project start + Rev 00 cycle time (auto-calculated)
+      // Rev 01+: target from previous revision's received event
       let targetSubmissionDate: string | null = null;
-      if (index > 0) {
-        // Look at previous revision's received event for target_submission_date
+      if (revNum === 0) {
+        // Rev 00: expected date of submission = project start + Rev 00 cycle time
+        const startDate = normalizeDate(projectDocumentationStartDate) || normalizeDate(projectData?.sales_order_date);
+        const cycleTimeRev00 = projectData?.vdcr_cycle_time_rev_00;
+        if (startDate && cycleTimeRev00 != null && cycleTimeRev00 >= 0) {
+          targetSubmissionDate = addDaysToDate(startDate, cycleTimeRev00);
+        }
+      } else if (index > 0) {
+        // Rev 01+: look at previous revision's received event for target_submission_date
         const prevRevision = revisions[index - 1];
         if (prevRevision.receivedEvent?.target_submission_date) {
           targetSubmissionDate = prevRevision.receivedEvent.target_submission_date;
@@ -528,7 +548,7 @@ const VDCRRevisionHistory: React.FC<VDCRRevisionHistoryProps> = ({
                   <div className="text-xs text-gray-600 mt-1">Total Days with Us</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-semibold text-purple-600">{revisionTracking.stats.totalDaysWithClient}</div>
+                  <div className="text-2xl font-semibold text-blue-600">{revisionTracking.stats.totalDaysWithClient}</div>
                   <div className="text-xs text-gray-600 mt-1">Total Days with Client</div>
                 </div>
                 <div className="text-center">
@@ -568,85 +588,94 @@ const VDCRRevisionHistory: React.FC<VDCRRevisionHistoryProps> = ({
 
                         <div className="space-y-3">
                             {/* Sent to Client */}
-                            <div className="flex flex-col sm:flex-row sm:items-start gap-4 p-4 rounded-lg border-l-2 border-blue-300">
-                              <div className="flex-shrink-0 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                                <Send className="w-5 h-5 text-blue-600" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-sm font-semibold text-gray-800 mb-2">Sent to Client for Approval</div>
-                                {rev.sentDate ? (
-                                  <div className="space-y-2">
-                                    <div className="flex items-center gap-2 text-sm text-gray-700">
-                                      <Calendar className="w-4 h-4 text-gray-500" />
-                                      <span className="font-medium">{formatDate(rev.sentDate)}</span>
-                                    </div>
-                                    {/* Show Target Submission Date (from previous revision's received event) */}
-                                    {rev.targetSubmissionDate && (
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-2 text-xs text-gray-700">
-                                          <Calendar className="w-3.5 h-3.5" />
-                                          <span className="font-medium">Target Submission:</span>
-                                          <span className="text-gray-800">{formatDateOnly(rev.targetSubmissionDate)}</span>
-                                        </div>
-                                        {(() => {
-                                          const targetDate = new Date(rev.targetSubmissionDate);
-                                          targetDate.setHours(0, 0, 0, 0);
-                                          const actualDate = new Date(rev.sentDate!);
-                                          actualDate.setHours(0, 0, 0, 0);
-                                          
-                                          const timeDiff = actualDate.getTime() - targetDate.getTime();
-                                          const daysDiff = Math.abs(Math.ceil(timeDiff / (1000 * 60 * 60 * 24)));
-                                          
-                                          // Determine status: early, on time, or late
-                                          let statusText = '';
-                                          let isGood = false;
-                                          
-                                          if (timeDiff < 0) {
-                                            // Sent before target date (early)
-                                            statusText = `${daysDiff} days early`;
-                                            isGood = true;
-                                          } else if (timeDiff === 0 || daysDiff === 0) {
-                                            // Sent exactly on target date (on time)
-                                            statusText = 'on time';
-                                            isGood = true;
-                                          } else {
-                                            // Sent after target date (late)
-                                            statusText = `${daysDiff} days late`;
-                                            isGood = false;
-                                          }
-                                          
-                                          return (
-                                            <div className={`text-xs font-bold px-2 py-0.5 rounded inline-block ${isGood ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                              {isGood ? '✓' : '✗'} {statusText}
-                                            </div>
-                                          );
-                                        })()}
+                            <div className="p-4 rounded-lg border-l-2 border-blue-300 space-y-3">
+                              <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                                <div className="flex-shrink-0 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                                  <Send className="w-5 h-5 text-blue-600" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-semibold text-gray-800 mb-2">Sent to Client for Approval</div>
+                                  {rev.sentDate ? (
+                                    <div className="space-y-2">
+                                      <div className="flex items-center gap-2 text-sm text-gray-700">
+                                        <Calendar className="w-4 h-4 text-gray-500" />
+                                        <span className="font-medium">{formatDate(rev.sentDate)}</span>
                                       </div>
-                                    )}
+                                      {/* Show Expected/Target Submission Date: Rev 00 = project start + cycle time; Rev 01+ = from previous received event */}
+                                      {rev.targetSubmissionDate && (
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-2 text-xs text-gray-700">
+                                            <Calendar className="w-3.5 h-3.5" />
+                                            <span className="font-medium">{revNum === 0 ? 'Expected Date of Submission:' : 'Target Submission:'}</span>
+                                            <span className="text-gray-800">{formatDateOnly(rev.targetSubmissionDate)}</span>
+                                          </div>
+                                          {(() => {
+                                            const targetDate = new Date(rev.targetSubmissionDate);
+                                            targetDate.setHours(0, 0, 0, 0);
+                                            const actualDate = new Date(rev.sentDate!);
+                                            actualDate.setHours(0, 0, 0, 0);
+                                            
+                                            const timeDiff = actualDate.getTime() - targetDate.getTime();
+                                            const daysDiff = Math.abs(Math.ceil(timeDiff / (1000 * 60 * 60 * 24)));
+                                            
+                                            // Determine status: early, on time, or late
+                                            let statusText = '';
+                                            let isGood = false;
+                                            
+                                            if (timeDiff < 0) {
+                                              // Sent before target date (early)
+                                              statusText = `${daysDiff} days early`;
+                                              isGood = true;
+                                            } else if (timeDiff === 0 || daysDiff === 0) {
+                                              // Sent exactly on target date (on time)
+                                              statusText = 'on time';
+                                              isGood = true;
+                                            } else {
+                                              // Sent after target date (late)
+                                              statusText = `${daysDiff} days late`;
+                                              isGood = false;
+                                            }
+                                            
+                                            return (
+                                              <div className={`text-xs font-bold px-2 py-0.5 rounded inline-block ${isGood ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                {isGood ? '✓' : '✗'} {statusText}
+                                              </div>
+                                            );
+                                          })()}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="text-sm text-gray-500 italic">Not sent yet</div>
+                                  )}
+                                </div>
+                                {rev.sentEvent?.notes && (
+                                  <div className="flex-shrink-0 w-full sm:w-[250px]">
+                                    <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5">
+                                      <MessageSquare className="w-3.5 h-3.5" />
+                                      <span className="font-semibold">Remarks</span>
+                                    </div>
+                                    <div className="text-xs text-gray-700 bg-white p-2.5 rounded-md border border-gray-300 shadow-sm break-words leading-relaxed">{rev.sentEvent.notes}</div>
                                   </div>
-                                ) : (
-                                  <div className="text-sm text-gray-500 italic">Not sent yet</div>
                                 )}
                               </div>
-                              {rev.sentEvent?.notes && (
-                                <div className="flex-shrink-0 w-full sm:w-[250px]">
-                                  <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5">
-                                    <MessageSquare className="w-3.5 h-3.5" />
-                                    <span className="font-semibold">Remarks</span>
-                                  </div>
-                                  <div className="text-xs text-gray-700 bg-white p-2.5 rounded-md border border-gray-300 shadow-sm break-words leading-relaxed">{rev.sentEvent.notes}</div>
+                              {rev.sentEvent?.has_notable_change && (
+                                <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                                  <span className="font-medium text-blue-700">Notable change: </span>
+                                  <span>{rev.sentEvent.notable_change_title?.trim() || '—'}</span>
                                 </div>
                               )}
                             </div>
 
                             {/* Received from Client */}
-                            <div className="flex flex-col sm:flex-row sm:items-start gap-4 p-4 rounded-lg border-l-2 border-green-300">
-                              <div className="flex-shrink-0 p-2 bg-green-50 border border-green-200 rounded-lg">
-                                <Download className="w-5 h-5 text-green-600" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-sm font-semibold text-gray-800 mb-2">Received from Client with Comments</div>
-                                {rev.receivedDate ? (
+                            <div className="p-4 rounded-lg border-l-2 border-green-300 space-y-3">
+                              <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                                <div className="flex-shrink-0 p-2 bg-green-50 border border-green-200 rounded-lg">
+                                  <Download className="w-5 h-5 text-green-600" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-semibold text-gray-800 mb-2">Received from Client with Comments</div>
+                                  {rev.receivedDate ? (
                                   <div className="space-y-2">
                                     <div className="flex items-center gap-2 text-sm text-gray-700">
                                       <Calendar className="w-4 h-4 text-gray-500" />
@@ -700,13 +729,20 @@ const VDCRRevisionHistory: React.FC<VDCRRevisionHistoryProps> = ({
                                   <div className="text-sm text-gray-500 italic">Not received yet</div>
                                 )}
                               </div>
-                              {rev.receivedEvent?.notes && (
-                                <div className="flex-shrink-0 w-full sm:w-[250px]">
-                                  <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5">
-                                    <MessageSquare className="w-3.5 h-3.5" />
-                                    <span className="font-semibold">Remarks</span>
+                                {rev.receivedEvent?.notes && (
+                                  <div className="flex-shrink-0 w-full sm:w-[250px]">
+                                    <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5">
+                                      <MessageSquare className="w-3.5 h-3.5" />
+                                      <span className="font-semibold">Remarks</span>
+                                    </div>
+                                    <div className="text-xs text-gray-700 bg-white p-2.5 rounded-md border border-gray-300 shadow-sm break-words leading-relaxed">{rev.receivedEvent.notes}</div>
                                   </div>
-                                  <div className="text-xs text-gray-700 bg-white p-2.5 rounded-md border border-gray-300 shadow-sm break-words leading-relaxed">{rev.receivedEvent.notes}</div>
+                                )}
+                              </div>
+                              {rev.receivedEvent?.has_notable_change && (
+                                <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                                  <span className="font-medium text-blue-700">Notable change: </span>
+                                  <span>{rev.receivedEvent.notable_change_title?.trim() || '—'}</span>
                                 </div>
                               )}
                             </div>
@@ -715,8 +751,8 @@ const VDCRRevisionHistory: React.FC<VDCRRevisionHistoryProps> = ({
                             <div className="pt-3 border-t border-gray-200">
                                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
                                   {rev.sentDate && rev.receivedDate ? (
-                                    <div className="text-center p-2 rounded border border-purple-200 bg-purple-50/30">
-                                      <div className="text-lg font-semibold text-purple-600">{rev.daysWithClient}</div>
+                                    <div className="text-center p-2 rounded border border-blue-200 bg-blue-50/30">
+                                      <div className="text-lg font-semibold text-blue-600">{rev.daysWithClient}</div>
                                       <div className="text-xs text-gray-600">Days with Client</div>
                                     </div>
                                   ) : (

@@ -259,7 +259,7 @@ const StandaloneEquipmentLogsTab: React.FC<StandaloneEquipmentLogsTabProps> = ({
       'equipment_created': { label: 'Created', color: 'text-green-800', bgColor: 'bg-green-100', borderColor: 'border-green-200', icon: Building },
       'equipment_updated': { label: 'Updated', color: 'text-blue-800', bgColor: 'bg-blue-100', borderColor: 'border-blue-200', icon: Wrench },
       'equipment_deleted': { label: 'Deleted', color: 'text-red-800', bgColor: 'bg-red-100', borderColor: 'border-red-200', icon: AlertTriangle },
-      'progress_image_uploaded': { label: 'Progress Image', color: 'text-purple-800', bgColor: 'bg-purple-100', borderColor: 'border-purple-200', icon: Image },
+      'progress_image_uploaded': { label: 'Progress Image', color: 'text-blue-800', bgColor: 'bg-blue-100', borderColor: 'border-blue-200', icon: Image },
       'technical_specs_updated': { label: 'Technical Specs', color: 'text-orange-800', bgColor: 'bg-orange-100', borderColor: 'border-orange-200', icon: Wrench },
       'technical_section_added': { label: 'Tech Section Added', color: 'text-orange-800', bgColor: 'bg-orange-100', borderColor: 'border-orange-200', icon: Wrench },
       'document_uploaded': { label: 'Document Added', color: 'text-indigo-800', bgColor: 'bg-indigo-100', borderColor: 'border-indigo-200', icon: FileCheck },
@@ -328,7 +328,7 @@ const StandaloneEquipmentLogsTab: React.FC<StandaloneEquipmentLogsTabProps> = ({
             placeholder="Search equipment logs by unit, status, or user..."
             value={equipmentSearchQuery}
             onChange={(e) => setEquipmentSearchQuery(e.target.value)}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
       </div>
@@ -336,7 +336,7 @@ const StandaloneEquipmentLogsTab: React.FC<StandaloneEquipmentLogsTabProps> = ({
       {/* Activity Logs */}
       {isLoadingEquipmentLogs ? (
         <div className="flex items-center justify-center p-8">
-          <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
         </div>
       ) : filteredLogs.length > 0 ? (
         <div className="max-h-96 overflow-y-auto space-y-3 pr-1.5 sm:pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
@@ -383,7 +383,7 @@ const StandaloneEquipmentLogsTab: React.FC<StandaloneEquipmentLogsTabProps> = ({
                   {/* Progress Image Added */}
                   {log.activityType === 'progress_image_uploaded' && (
                     <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 text-[10px] sm:text-xs md:text-sm text-gray-700 flex-wrap">
-                      <Image size={12} className="sm:w-[14px] sm:h-[14px] text-purple-600 flex-shrink-0" />
+                      <Image size={12} className="sm:w-[14px] sm:h-[14px] text-blue-600 flex-shrink-0" />
                       <span className="flex-shrink-0">New progress image added</span>
                       {log.metadata?.imageDescription && (
                         <span className="text-gray-500 truncate">- {log.metadata.imageDescription}</span>

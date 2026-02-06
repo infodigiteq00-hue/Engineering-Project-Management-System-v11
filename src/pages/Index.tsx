@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import UnifiedProjectView from "@/components/dashboard/UnifiedProjectView";
 import ProjectFilters from "@/components/dashboard/ProjectFilters";
 import ProjectHeader from "@/components/dashboard/ProjectHeader";
@@ -15,6 +15,7 @@ import { supabase } from "@/lib/supabase";
 import { fastAPI } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { useNotificationReads, UnreadEntityDot } from "@/contexts/NotificationReadsContext";
 import axios from "axios";
 import { logProjectCreated, logProjectUpdated, logProjectDeleted } from "@/lib/activityLogger";
 import { generateRecommendationLetterWord } from "@/utils/wordGenerator";
@@ -74,6 +75,7 @@ interface Project {
 const Index = () => {
   const { toast } = useToast();
   const { firmId: authFirmId, userRole: authUserRole, userName: authUserName, loading: authLoading } = useAuth();
+  const { hasUnread, markAsSeen } = useNotificationReads();
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [selectedProjectTab, setSelectedProjectTab] = useState<string>("equipment");
   const [projects, setProjects] = useState(mockProjects);
@@ -83,6 +85,7 @@ const Index = () => {
   const [showAddProjectForm, setShowAddProjectForm] = useState(false);
   const [editingProject, setEditingProject] = useState<any>(null);
   const [editMode, setEditMode] = useState(false);
+  const fetchProjectsRef = useRef<(() => Promise<void>) | null>(null);
   
   // User data state - initialize from localStorage immediately for instant display on refresh
   const [userName, setUserName] = useState<string>(() => {
@@ -511,10 +514,12 @@ const Index = () => {
       }
     };
 
+    fetchProjectsRef.current = fetchProjectsFromSupabase;
     fetchProjectsFromSupabase();
     
     return () => {
       isMounted = false;
+      fetchProjectsRef.current = null;
     };
     
     // Only run when authLoading changes from true to false, or when we have localStorage data
@@ -1064,8 +1069,11 @@ const Index = () => {
     }
   }, [totalProjects, totalEquipment, activeFilters, projects.length]);
 
-  // Handle project selection and navigation
-  const handleSelectProject = (projectId: string, initialTab: string = "equipment") => {
+  // Handle project selection and navigation. Only mark project as read when opening from a project card, not from an update card in Company Highlights.
+  const handleSelectProject = (projectId: string, initialTab: string = "equipment", options?: { fromUpdateCard?: boolean }) => {
+    if (!options?.fromUpdateCard) {
+      markAsSeen(`project_${projectId}`);
+    }
     // Store the current tab before switching (for back navigation)
     if (mainTab !== 'projects') {
       setPreviousTab(mainTab);
@@ -1950,33 +1958,33 @@ Note: Please download the Recommendation Letter template using the link above, f
       
       await fastAPI.updateProject(updatedProjectData.id, projectDataForSupabase);
       
-      // Update local state
-    const updatedProjects = projects.map(p => 
-        p.id === updatedProjectData.id ? {
+      // Refetch full project (including documents) so Documents Uploaded tab shows newly added docs
+      const freshProjectArray = await fastAPI.getProjectById(updatedProjectData.id);
+      const freshProject = Array.isArray(freshProjectArray) && freshProjectArray.length > 0 ? freshProjectArray[0] : null;
+      
+      // Update local state with fresh project data (including document arrays)
+    const updatedProjects = projects.map(p => {
+        if (p.id !== updatedProjectData.id) return p;
+        if (!freshProject) {
+          return { ...p, name: updatedProjectData.projectTitle, client: updatedProjectData.clientName, location: updatedProjectData.plantLocation, manager: updatedProjectData.projectManager, deadline: updatedProjectData.completionDate, poNumber: updatedProjectData.poNumber, clientFocalPoint: updatedProjectData.clientFocalPoint };
+        }
+        return {
           ...p,
-          name: updatedProjectData.projectTitle,
-          client: updatedProjectData.clientName,
-          location: updatedProjectData.plantLocation,
-          manager: updatedProjectData.projectManager,
-          deadline: updatedProjectData.completionDate,
-          poNumber: updatedProjectData.poNumber,
-          clientFocalPoint: updatedProjectData.clientFocalPoint 
-
-        } : p
-    );
+          name: freshProject.name || updatedProjectData.projectTitle,
+          client: freshProject.client || updatedProjectData.clientName,
+          location: freshProject.location || updatedProjectData.plantLocation,
+          manager: freshProject.manager || updatedProjectData.projectManager,
+          deadline: freshProject.deadline || updatedProjectData.completionDate,
+          poNumber: freshProject.po_number || updatedProjectData.poNumber,
+          clientFocalPoint: freshProject.client_focal_point || updatedProjectData.clientFocalPoint,
+          unpricedPODocuments: freshProject.unpriced_po_documents || [],
+          designInputsDocuments: freshProject.design_inputs_documents || [],
+          clientReferenceDocuments: freshProject.client_reference_documents || [],
+          otherDocumentsLinks: freshProject.other_documents || []
+        };
+    });
     setProjects(updatedProjects);
-    setFilteredProjects(updatedProjects.map(p => 
-        p.id === updatedProjectData.id ? {
-          ...p,
-          name: updatedProjectData.projectTitle,
-          client: updatedProjectData.clientName,
-          location: updatedProjectData.plantLocation,
-          manager: updatedProjectData.projectManager,
-          deadline: updatedProjectData.completionDate,
-          poNumber: updatedProjectData.poNumber,
-          clientFocalPoint: updatedProjectData.clientFocalPoint 
-        } : p
-    ));
+    setFilteredProjects([...updatedProjects]);
     
     // Update project cards cache (lightweight version)
     // Only cache active projects (not completed), limit to 24 projects max
@@ -2046,7 +2054,7 @@ Note: Please download the Recommendation Letter template using the link above, f
           <div className="border-b border-gray-200 overflow-x-auto overflow-y-hidden">
             <nav className="-mb-px flex space-x-8 min-w-max flex-nowrap px-1">
               <button
-                onClick={() => setMainTab('projects')}
+                onClick={() => { markAsSeen('projects'); setMainTab('projects'); }}
                 className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors flex-shrink-0 ${
                   mainTab === 'projects'
                     ? 'border-blue-500 text-blue-600'
@@ -2057,11 +2065,19 @@ Note: Please download the Recommendation Letter template using the link above, f
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
-                  Projects ({projects.length > 0 ? totalProjects : (cachedTabCounters?.projects || cachedSummaryStats?.totalProjects || 0)})
+                  <span className="flex items-center gap-1.5">
+                    Projects ({projects.length > 0 ? totalProjects : (cachedTabCounters?.projects || cachedSummaryStats?.totalProjects || 0)})
+                    {hasUnread('projects', projects.map((p: any) => ({ id: p.id, updated_at: p.updated_at, last_update: p.last_update }))) && (
+                      <span className="relative flex h-2 w-2 shrink-0" title="New updates – click to view">
+                        <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      </span>
+                    )}
+                  </span>
                 </div>
               </button>
               <button
-                onClick={() => setMainTab('equipment')}
+                onClick={() => { markAsSeen('standalone_equipment'); setMainTab('equipment'); }}
                 className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors flex-shrink-0 ${
                   mainTab === 'equipment'
                     ? 'border-green-500 text-green-600'
@@ -2073,7 +2089,15 @@ Note: Please download the Recommendation Letter template using the link above, f
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
-                  Standalone Equipment ({standaloneEquipmentSummary?.total ?? cachedTabCounters?.standaloneEquipment ?? standaloneEquipment.length})
+                  <span className="flex items-center gap-1.5">
+                    Standalone Equipment ({standaloneEquipmentSummary?.total ?? cachedTabCounters?.standaloneEquipment ?? standaloneEquipment.length})
+                    {hasUnread('standalone_equipment', standaloneEquipment.map((e: any) => ({ id: e.id, updated_at: e.updated_at, last_update: e.last_update }))) && (
+                      <span className="relative flex h-2 w-2 shrink-0" title="New updates – click to view">
+                        <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      </span>
+                    )}
+                  </span>
                 </div>
               </button>
               
@@ -2124,7 +2148,7 @@ Note: Please download the Recommendation Letter template using the link above, f
             />
 
             {/* Company Highlights Section */}
-            <CompanyHighlights onSelectProject={handleSelectProject} />
+            <CompanyHighlights onSelectProject={handleSelectProject} onMarkAsRead={markAsSeen} />
 
             {/* Expandable Project Filters */}
             <div className="mb-6 sm:mb-8">
@@ -2280,7 +2304,10 @@ Note: Please download the Recommendation Letter template using the link above, f
                         
                         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1 sm:gap-0">
                           <div className="flex-1 min-w-0">
-                            <h3 className="text-lg sm:text-xl font-bold text-gray-800 mb-1 sm:mb-1 truncate">{project.name}</h3>
+                            <div className="flex items-center gap-1.5 mb-1 sm:mb-1">
+                              <h3 className="text-lg sm:text-xl font-bold text-gray-800 truncate">{project.name}</h3>
+                              <UnreadEntityDot entityKey={`project_${project.id}`} updatedAt={project.updated_at ?? project.last_update} />
+                            </div>
                             <p className="hidden sm:block text-xs text-blue-600 font-medium mb-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                               Click to view details →
                             </p>
@@ -2981,6 +3008,21 @@ Note: Please download the Recommendation Letter template using the link above, f
             onEditProject={handleEditProject}
             onDeleteProject={handleDeleteProject}
             onCompleteProject={handleCompleteProject}
+            onDocumentDeleted={(projectId, documentId, documentType) => {
+              const docKey = documentType === 'unpriced_po_documents' ? 'unpricedPODocuments'
+                : documentType === 'design_inputs_documents' ? 'designInputsDocuments'
+                : documentType === 'client_reference_documents' ? 'clientReferenceDocuments'
+                : 'otherDocumentsLinks';
+              const removeDoc = (p: any) => {
+                if (p.id !== projectId) return p;
+                const arr = p[docKey];
+                if (!Array.isArray(arr)) return p;
+                return { ...p, [docKey]: arr.filter((d: any) => d.id !== documentId) };
+              };
+              setProjects(prev => prev.map(removeDoc));
+              setFilteredProjects(prev => prev.map(removeDoc));
+              fetchProjectsRef.current?.();
+            }}
           />
         ) : null}
       </div>

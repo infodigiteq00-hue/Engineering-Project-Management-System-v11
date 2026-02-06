@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ChevronLeft, FileText, Download, Edit, Plus, Eye, Check, X, ChevronDown, ChevronUp, ChevronRight, Users, Settings, Lock, Unlock, History, Send, Calendar, Clock, Tag, Pencil, CheckCircle } from "lucide-react";
+import { ChevronLeft, FileText, Download, Edit, Plus, Eye, Check, X, ChevronDown, ChevronUp, ChevronRight, Users, Settings, Lock, Unlock, History, Send, Calendar, Clock, Tag, Pencil, CheckCircle, MessageSquare, LayoutList } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fastAPI } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useNotificationReads, UnreadEntityDot } from "@/contexts/NotificationReadsContext";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { logVDCRCreated, logVDCRUpdated, logVDCRStatusChanged, logVDCRDocumentUploaded, logVDCRDeleted, logVDCRFieldUpdated } from "@/lib/activityLogger";
@@ -57,6 +58,7 @@ interface VDCRRecord {
   status: 'approved' | 'sent-for-approval' | 'received-for-comment' | 'pending' | 'rejected';
   department?: string;
   lastUpdate: string;
+  updated_at?: string;
   remarks?: string;
   updatedBy?: string;
   documentFile?: DocumentFile;
@@ -84,6 +86,7 @@ interface ProjectsVDCRProps {
 const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEquipment }: ProjectsVDCRProps) => {
   const { user, userName } = useAuth();
   const { toast } = useToast();
+  const { markAsSeen } = useNotificationReads();
   const currentUserRole = localStorage.getItem('userRole') || '';
 
   // Helper function to get correct user ID from database (only called if 409 error occurs)
@@ -144,7 +147,11 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
   });
 
   // Project data for getting default PO date
-  const [projectData, setProjectData] = useState<{ sales_order_date?: string } | null>(null);
+  const [projectData, setProjectData] = useState<{ 
+    sales_order_date?: string; 
+    vdcr_cycle_time_rev_00?: number | null; 
+    vdcr_cycle_time_rev_01_plus?: number | null;
+  } | null>(null);
 
   // State for available departments (for dropdown)
   const [availableDepartments, setAvailableDepartments] = useState<string[]>([]);
@@ -415,6 +422,8 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
     documentUrl: string | null;
     isUploadingDocument: boolean;
     uploadAbortController: AbortController | null;
+    hasNotableChange: boolean;
+    notableChangeTitle: string;
   }>({
     isOpen: false,
     eventType: null,
@@ -425,7 +434,9 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
     documentFile: null,
     documentUrl: null,
     isUploadingDocument: false,
-    uploadAbortController: null
+    uploadAbortController: null,
+    hasNotableChange: false,
+    notableChangeTitle: ''
   });
 
   // Bulk upload modal state
@@ -442,6 +453,17 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
     previewData: [],
     isProcessing: false
   });
+
+  // Export reports modal: which reports to export (2+ selected = one file with multiple sheets; 1 selected = one file)
+  type ExportReportId = 'vdcr-records' | 'revision-history' | 'revision-remarks';
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportSelected, setExportSelected] = useState<Record<ExportReportId, boolean>>({
+    'vdcr-records': false,
+    'revision-history': false,
+    'revision-remarks': false
+  });
+  const [exporting, setExporting] = useState(false);
+
   // VDCR data state - will be loaded from Supabase
   const [vdcrData, setVdcrData] = useState<VDCRRecord[]>([]);
 
@@ -450,6 +472,12 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
 
   // Search functionality state
   const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // VDCR cycle time state (days) - used for auto-calculating expected return/submission dates
+  const [cycleTimeRev00, setCycleTimeRev00] = useState<number | ''>('');
+  const [cycleTimeRev01Plus, setCycleTimeRev01Plus] = useState<number | ''>('');
+  const [isSavingCycleTime, setIsSavingCycleTime] = useState(false);
+  const [cycleTimeSaveSuccess, setCycleTimeSaveSuccess] = useState(false);
 
   // Load data on component mount
   useEffect(() => {
@@ -466,6 +494,19 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
       setSelectedEquipments(editingVDCR.equipmentTagNo);
     }
   }, [equipmentData, editingVDCR]);
+
+  // Sync cycle time from project data when loaded
+  useEffect(() => {
+    if (projectData) {
+      const rev00 = projectData.vdcr_cycle_time_rev_00;
+      const rev01Plus = projectData.vdcr_cycle_time_rev_01_plus;
+      setCycleTimeRev00(rev00 != null && rev00 >= 0 ? rev00 : '');
+      setCycleTimeRev01Plus(rev01Plus != null && rev01Plus >= 0 ? rev01Plus : '');
+      // If project has cycle time saved, show edit icon (not Save button) on load/refresh
+      const hasSavedCycleTime = (rev00 != null && rev00 >= 0) || (rev01Plus != null && rev01Plus >= 0);
+      setCycleTimeSaveSuccess(hasSavedCycleTime);
+    }
+  }, [projectData?.vdcr_cycle_time_rev_00, projectData?.vdcr_cycle_time_rev_01_plus]);
 
   // Clean up AUTO-GENERATED values from database
   const cleanupAutoGeneratedValues = async (data: any[]) => {
@@ -505,6 +546,59 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
     }
   };
 
+  // Save VDCR cycle time to project
+  const handleSaveCycleTime = async () => {
+    const rev00 = cycleTimeRev00 === '' ? null : Number(cycleTimeRev00);
+    const rev01Plus = cycleTimeRev01Plus === '' ? null : Number(cycleTimeRev01Plus);
+    if ((rev00 != null && (rev00 < 0 || !Number.isInteger(rev00))) || 
+        (rev01Plus != null && (rev01Plus < 0 || !Number.isInteger(rev01Plus)))) {
+      toast({ title: 'Invalid cycle time', description: 'Cycle time must be a positive whole number (days).', variant: 'destructive' });
+      return;
+    }
+    setIsSavingCycleTime(true);
+    try {
+      await fastAPI.updateProject(projectId, {
+        vdcr_cycle_time_rev_00: rev00,
+        vdcr_cycle_time_rev_01_plus: rev01Plus
+      });
+      setProjectData(prev => prev ? { ...prev, vdcr_cycle_time_rev_00: rev00 ?? undefined, vdcr_cycle_time_rev_01_plus: rev01Plus ?? undefined } : null);
+      setCycleTimeSaveSuccess(true);
+      toast({ title: 'Saved', description: 'Documentation cycle time settings saved successfully.' });
+    } catch (error) {
+      console.error('Error saving cycle time:', error);
+      toast({ title: 'Error', description: 'Failed to save cycle time. Run the migration SQL if needed.', variant: 'destructive' });
+    } finally {
+      setIsSavingCycleTime(false);
+    }
+  };
+
+  // Helper: get cycle time in days for a given revision number (0 = Rev-00, 1+ = Rev-01+)
+  const getCycleTimeForRevision = (revNum: number): number | null => {
+    if (revNum === 0) {
+      return cycleTimeRev00 === '' ? (projectData?.vdcr_cycle_time_rev_00 ?? null) : Number(cycleTimeRev00);
+    }
+    return cycleTimeRev01Plus === '' ? (projectData?.vdcr_cycle_time_rev_01_plus ?? null) : Number(cycleTimeRev01Plus);
+  };
+
+  // For "Submitted" events: if current rev (e.g. Rev-00) has BOTH submitted AND received, we're about to submit Rev 01 → use Rev 01+ cycle time
+  const getEffectiveRevNumForSubmitted = (revision: string, revisionEvents: any[] | undefined): number => {
+    const revMatch = revision.match(/Rev-?(\d+)/i) || revision.match(/(\d+)/);
+    const revNum = revMatch ? parseInt(revMatch[1], 10) : 0;
+    if (!revisionEvents?.length) return revNum;
+    const currentRevEvents = revisionEvents.filter((e: any) => e.revision_number === revision);
+    const hasSubmitted = currentRevEvents.some((e: any) => e.event_type === 'submitted');
+    const hasReceived = currentRevEvents.some((e: any) => e.event_type === 'received');
+    if (hasSubmitted && hasReceived) return revNum + 1; // Next submission is Rev 01+
+    return revNum;
+  };
+
+  // Helper: add days to a date string (YYYY-MM-DD) and return YYYY-MM-DD
+  const addDaysToDate = (dateStr: string, days: number): string => {
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
+  };
+
   // Load VDCR data from Supabase
   const loadVDCRData = async () => {
     try {
@@ -536,11 +630,13 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
              
              // Find the latest document URL from most recent event (submitted or received)
              if (events.length > 0) {
-               // Sort by event_date descending to get most recent, then by created_at descending as tiebreaker
+               // Sort by event_date descending (fallback to created_at when event_date is invalid)
                const sortedEvents = [...events].sort((a, b) => {
-                 const dateDiff = new Date(b.event_date).getTime() - new Date(a.event_date).getTime();
+                 const timeA = new Date(a.event_date).getTime();
+                 const timeB = new Date(b.event_date).getTime();
+                 const dateDiff = (Number.isNaN(timeB) ? new Date(b.created_at).getTime() : timeB) - 
+                   (Number.isNaN(timeA) ? new Date(a.created_at).getTime() : timeA);
                  if (dateDiff !== 0) return dateDiff;
-                 // Tiebreaker: use created_at to get the most recently created event
                  return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
                });
                // Get the most recent event with a document_url
@@ -582,9 +678,11 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
           let eventDate = record.updated_at;
           if (latestDocumentUrl && revisionEvents.length > 0) {
             const sortedEvents = [...revisionEvents].sort((a, b) => {
-              const dateDiff = new Date(b.event_date).getTime() - new Date(a.event_date).getTime();
+              const timeA = new Date(a.event_date).getTime();
+              const timeB = new Date(b.event_date).getTime();
+              const dateDiff = (Number.isNaN(timeB) ? new Date(b.created_at).getTime() : timeB) - 
+                (Number.isNaN(timeA) ? new Date(a.created_at).getTime() : timeA);
               if (dateDiff !== 0) return dateDiff;
-              // Tiebreaker: use created_at to get the most recently created event
               return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
             });
             const latestEvent = sortedEvents.find((e: any) => e.document_url === latestDocumentUrl);
@@ -651,6 +749,7 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
             day: '2-digit',
             year: 'numeric'
           }),
+          updated_at: record.updated_at,
           remarks: record.remarks,
           updatedBy: record.updated_by_user?.full_name || record.updated_by || 'Unknown User',
           // Use latest document URL from revision events, fallback to original document_url, then fallback path
@@ -702,7 +801,7 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
       console.error('❌ Error loading VDCR data:', error);
       toast({ 
         title: 'Error Loading Data', 
-        description: `Failed to load VDCR records: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        description: `Failed to load documentation records: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: 'destructive' 
       });
       setVdcrData([]);
@@ -1200,7 +1299,7 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
       case 'Code 3':
         return 'bg-yellow-50 text-yellow-700 border border-yellow-200';
       case 'Code 4':
-        return 'bg-purple-50 text-purple-700 border border-purple-200';
+        return 'bg-blue-50 text-blue-700 border border-blue-200';
       default:
         return 'bg-gray-50 text-gray-700 border border-gray-200';
     }
@@ -1375,7 +1474,7 @@ const handleCreateRevisionEvent = async () => {
     console.error('❌ Validation failed: editingVDCR is null', { editingVDCR, revisionEventModal });
     toast({ 
       title: 'Error', 
-      description: 'No VDCR record selected. Please select a VDCR record first.', 
+      description: 'No documentation record selected. Please select a documentation record first.', 
       variant: 'destructive' 
     });
     return;
@@ -1385,7 +1484,7 @@ const handleCreateRevisionEvent = async () => {
     console.error('❌ Validation failed: editingVDCR.id is missing', editingVDCR);
     toast({ 
       title: 'Error', 
-      description: 'VDCR record ID is missing. Please try refreshing the page.', 
+      description: 'Documentation record ID is missing. Please try refreshing the page.', 
       variant: 'destructive' 
     });
     return;
@@ -1397,6 +1496,15 @@ const handleCreateRevisionEvent = async () => {
       title: 'Error', 
       description: 'User not authenticated. Please login again.', 
       variant: 'destructive' 
+    });
+    return;
+  }
+
+  if (revisionEventModal.hasNotableChange && !revisionEventModal.notableChangeTitle?.trim()) {
+    toast({
+      title: 'Error',
+      description: 'Please enter a title for this notable change.',
+      variant: 'destructive'
     });
     return;
   }
@@ -1474,6 +1582,8 @@ const handleCreateRevisionEvent = async () => {
       target_submission_date: targetSubmissionDateISO,
       notes: revisionEventModal.notes || null,
       document_url: revisionEventModal.documentUrl || null,
+      has_notable_change: revisionEventModal.hasNotableChange || false,
+      notable_change_title: revisionEventModal.hasNotableChange && revisionEventModal.notableChangeTitle?.trim() ? revisionEventModal.notableChangeTitle.trim() : null,
       // RLS policy allows created_by = auth.uid() OR created_by IS NULL
       // Set to user.id if available, otherwise NULL (RLS will allow it)
       created_by: user?.id || null
@@ -1562,7 +1672,9 @@ const handleCreateRevisionEvent = async () => {
         documentFile: null,
         documentUrl: null,
         isUploadingDocument: false,
-        uploadAbortController: null
+        uploadAbortController: null,
+        hasNotableChange: false,
+        notableChangeTitle: ''
       });
   } catch (error: any) {
     console.error('❌ Error creating revision event:', error);
@@ -1610,38 +1722,9 @@ const handleCreateRevisionEvent = async () => {
     try {
       setIsSaving(true);
       
-        // Auto-increment revision if locked and this is an update (not new record)
-        // IMPORTANT: Do NOT increment revision when status changes to 'approved'
-        let finalRevision = formData.revision;
-        if (!isAddingNew && fieldLocks.revision && editingVDCR) {
-          // Check if status is changing to 'approved' - if so, keep revision the same
-          const isStatusChangingToApproved = editingVDCR.status !== 'approved' && formData.status === 'approved';
-          
-          if (!isStatusChangingToApproved) {
-            // Check if document changed (new file uploaded)
-            const hasNewDocument = uploadedFiles.length > 0 && 
-              (!editingVDCR.documentFile || 
-               uploadedFiles[uploadedFiles.length - 1].filePath !== editingVDCR.documentFile.filePath);
-            
-            // Check if any other fields changed (excluding status change to approved)
-            const hasChanges = 
-              // formData.clientDocNo !== editingVDCR.clientDocNo ||
-              // formData.internalDocNo !== editingVDCR.internalDocNo ||
-              // formData.codeStatus !== editingVDCR.codeStatus ||
-              (formData.status !== editingVDCR.status && !isStatusChangingToApproved) ||
-              formData.remarks !== (editingVDCR.remarks || '') ||
-              JSON.stringify(selectedEquipments) !== JSON.stringify(editingVDCR.equipmentTagNo) ||
-              hasNewDocument;
-    
-            if (hasChanges) {
-              const currentRevision = editingVDCR.revision || '0';
-              const revisionNum = parseInt(currentRevision.replace(/[^0-9]/g, '')) || 0;
-              finalRevision = (revisionNum + 1).toString();
-              setFormData(prev => ({ ...prev, revision: finalRevision }));
-            }
-          }
-          // If status is changing to approved, keep the same revision (finalRevision already set to formData.revision)
-        }
+        // Revision number is NEVER changed by regular edits (status, doc name, remarks, etc.)
+        // Revision only changes when user clicks Submitted/Commented (revision event buttons)
+        const finalRevision = formData.revision;
 
       // Get selected equipment details
       const selectedEquipmentDetails = getSelectedEquipmentDetails();
@@ -1749,7 +1832,7 @@ const handleCreateRevisionEvent = async () => {
             console.error('❌ Failed to extract recordId from response:', newRecord);
             toast({ 
               title: 'Warning', 
-              description: 'VDCR record created but activity log may not be recorded. Please refresh the page.', 
+              description: 'Documentation record created but activity log may not be recorded. Please refresh the page.', 
               variant: 'default' 
             });
           }
@@ -2045,14 +2128,14 @@ const handleCreateRevisionEvent = async () => {
 
     } catch (error) {
       // console.error('Error saving VDCR record:', error);
-      toast({ title: 'Error', description: 'Error saving VDCR record. Please try again.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Error saving documentation record. Please try again.', variant: 'destructive' });
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDeleteVDCR = async (recordId: string) => {
-    if (window.confirm('Are you sure you want to delete this VDCR record? This action cannot be undone.')) {
+    if (window.confirm('Are you sure you want to delete this documentation record? This action cannot be undone.')) {
       try {
         // Get document name and status before deletion for logging and equipment cleanup
         const recordToDelete = vdcrData.find(r => r.id === recordId);
@@ -2099,7 +2182,7 @@ const handleCreateRevisionEvent = async () => {
         }
       } catch (error) {
         // console.error('Error deleting VDCR record:', error);
-        toast({ title: 'Error', description: 'Error deleting VDCR record. Please try again.', variant: 'destructive' });
+        toast({ title: 'Error', description: 'Error deleting documentation record. Please try again.', variant: 'destructive' });
       }
     }
   };
@@ -2233,7 +2316,7 @@ const handleCreateRevisionEvent = async () => {
 
         } catch (bucketError) {
           // console.error('❌ VDCR-docs bucket upload failed:', bucketError);
-          toast({ title: 'Error', description: 'Failed to upload to VDCR storage. Please ensure the VDCR-docs bucket exists and try again.', variant: 'destructive' });
+          toast({ title: 'Error', description: 'Failed to upload to document storage. Please ensure the storage bucket exists and try again.', variant: 'destructive' });
           return;
         }
 
@@ -2307,13 +2390,7 @@ const handleCreateRevisionEvent = async () => {
 
       setUploadedFiles(prev => [...prev, newDocument]);
       
-      // Auto-increment revision if locked (when document changes)
-      if (fieldLocks.revision) {
-        const currentRevision = formData.revision || '0';
-        const revisionNum = parseInt(currentRevision.replace(/[^0-9]/g, '')) || 0;
-        const nextRevision = (revisionNum + 1).toString();
-        setFormData(prev => ({ ...prev, revision: nextRevision }));
-      }
+      // Revision is NOT changed by file upload - only by Submitted/Commented buttons
 
       // // console.log('✅ File uploaded to storage successfully');
       // // console.log('📄 Document URL will be saved to vdcr_records.document_url when form is submitted');
@@ -2350,11 +2427,13 @@ const handleCreateRevisionEvent = async () => {
       try {
         const events: any = await fastAPI.getVDCRRevisionEvents(recordIdToUse);
         if (Array.isArray(events) && events.length > 0) {
-          // Sort by event_date descending to get most recent, then by created_at descending as tiebreaker
+          // Sort by event_date descending (fallback to created_at when event_date is invalid)
           const sortedEvents = [...events].sort((a, b) => {
-            const dateDiff = new Date(b.event_date).getTime() - new Date(a.event_date).getTime();
+            const timeA = new Date(a.event_date).getTime();
+            const timeB = new Date(b.event_date).getTime();
+            const dateDiff = (Number.isNaN(timeB) ? new Date(b.created_at).getTime() : timeB) - 
+              (Number.isNaN(timeA) ? new Date(a.created_at).getTime() : timeA);
             if (dateDiff !== 0) return dateDiff;
-            // Tiebreaker: use created_at to get the most recently created event
             return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
           });
           // Get the most recent event with a document_url
@@ -2376,14 +2455,26 @@ const handleCreateRevisionEvent = async () => {
       console.log('⚠️ No record ID found, cannot fetch latest revision events');
     }
 
+    // Helper: derive file type from URL (actual filename has extension; display names often don't)
+    const getFileTypeFromUrl = (url: string) => {
+      const fileName = url.split('/').pop()?.split('?')[0] || '';
+      return fileName.toLowerCase().includes('.pdf') ? 'pdf' :
+        fileName.toLowerCase().includes('.docx') ? 'docx' :
+          fileName.toLowerCase().includes('.xlsx') ? 'xlsx' :
+            fileName.toLowerCase().includes('.pptx') ? 'pptx' :
+              fileName.toLowerCase().match(/\.(jpg|jpeg|png|gif)$/) ? 'image' : 'other';
+    };
+
     // Now find the document using the latest document URL
     // First, try to find in VDCR data (this contains the latest revision event documents)
       if (vdcrRecord?.documentFile) {
         document = vdcrRecord.documentFile;
-      // Always use the latest document URL from revision events
+      // Always use the latest document URL from revision events; derive fileType from URL
+      const fileTypeFromUrl = getFileTypeFromUrl(latestDocumentUrl);
       document = {
         ...document,
-        filePath: latestDocumentUrl
+        filePath: latestDocumentUrl,
+        fileType: fileTypeFromUrl !== 'other' ? fileTypeFromUrl : (document?.fileType || 'other')
       };
       }
 
@@ -2394,16 +2485,23 @@ const handleCreateRevisionEvent = async () => {
 
     // If still not found, create a mock document for preview using the latest document URL
     if (!document && latestDocumentUrl) {
-      // // console.log('📄 Creating mock document for preview');
+      // Derive file type from the URL (actual filename) - NOT from documentName
+      // documentName from revision history is a display label like "Purchase drawing - Rev-00 - Submitted"
+      // which has no extension; the real filename is in the URL path
+      const urlFileName = latestDocumentUrl.split('/').pop()?.split('?')[0] || '';
+      const fileTypeFromUrl = getFileTypeFromUrl(latestDocumentUrl);
+      const fileTypeFromName = documentName.toLowerCase().includes('.pdf') ? 'pdf' :
+        documentName.toLowerCase().includes('.docx') ? 'docx' :
+          documentName.toLowerCase().includes('.xlsx') ? 'xlsx' :
+            documentName.toLowerCase().includes('.pptx') ? 'pptx' :
+              documentName.toLowerCase().match(/\.(jpg|jpeg|png|gif)$/) ? 'image' : 'other';
+      const resolvedFileType = fileTypeFromUrl !== 'other' ? fileTypeFromUrl : fileTypeFromName;
+
       document = {
         id: `mock-${Date.now()}`,
-        fileName: documentName,
+        fileName: urlFileName || documentName,
         originalName: documentName,
-        fileType: documentName.toLowerCase().includes('.pdf') ? 'pdf' :
-          documentName.toLowerCase().includes('.docx') ? 'docx' :
-            documentName.toLowerCase().includes('.xlsx') ? 'xlsx' :
-              documentName.toLowerCase().includes('.pptx') ? 'pptx' :
-                documentName.toLowerCase().match(/\.(jpg|jpeg|png|gif)$/) ? 'image' : 'other',
+        fileType: resolvedFileType,
         fileSize: 1024 * 1024, // 1MB default
         uploadDate: new Date().toLocaleDateString('en-US', {
           month: 'short',
@@ -2443,19 +2541,15 @@ const handleCreateRevisionEvent = async () => {
       message: ''
     });
 
-    // Load PDF if it's a PDF file
-    // // console.log('🔍 Document name:', documentName);
-    // // console.log('🔍 Document name lowercase:', documentName.toLowerCase());
-    // // console.log('🔍 Ends with .pdf:', documentName.toLowerCase().endsWith('.pdf'));
-    // // console.log('🔍 Document fileType:', document?.fileType);
-    // // console.log('🔍 Document URL:', documentUrl);
-
+    // Load PDF if it's a PDF file - use resolved document URL (document.filePath / latestDocumentUrl)
+    // NOT the parameter - it may be stale when revision events have different dates/invalid data
+    const urlForPdf = document?.filePath || latestDocumentUrl || documentUrl;
     if (documentName.toLowerCase().endsWith('.pdf') || document?.fileType === 'pdf') {
-      // // console.log('📄 Loading PDF document...');
-      // Convert relative URL to absolute URL if needed
-      const pdfUrl = documentUrl.startsWith('http') ? documentUrl : `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/VDCR-docs${documentUrl}`;
-      // // console.log('📄 PDF URL for loading:', pdfUrl);
-      await loadPdfDocument(pdfUrl);
+      if (urlForPdf && !urlForPdf.startsWith('/documents/vdcr/')) {
+        // Only load if we have a real URL (not fallback path)
+        const pdfUrl = urlForPdf.startsWith('http') ? urlForPdf : `https://ammaosmkgwkamfjhcxik.supabase.co/storage/v1/object/public/VDCR-docs${urlForPdf}`;
+        await loadPdfDocument(pdfUrl);
+      }
     } else {
       // // console.log('📄 Not a PDF file, skipping PDF loading');
     }
@@ -2754,7 +2848,7 @@ const handleCreateRevisionEvent = async () => {
 
   // Standard VDCR Template for bulk upload
   const vdcrTemplate = {
-    name: 'VDCR Template',
+    name: 'Documentation Template',
     description: 'Standard template for Vendor Document Control Records',
     columns: ['Sr. No.', 'Equipment Tag No.', 'Document Name', 'Revision', 'Code Status', 'Status', 'Client Doc No.', 'Internal Doc No.', 'Department', 'Remarks'],
     sampleData: [
@@ -2770,28 +2864,16 @@ const handleCreateRevisionEvent = async () => {
 
   const downloadTemplate = async () => {
     try {
-      // Check if XLSX is already loaded
-      if (!window.XLSX) {
-        // Load xlsx from CDN
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        script.onload = () => generateTemplate();
-        script.onerror = () => {
-          toast({ title: 'Error', description: 'Failed to load Excel library. Please try again.', variant: 'destructive' });
-        };
-        document.head.appendChild(script);
-      } else {
-        generateTemplate();
-      }
+      await generateTemplate();
     } catch (error) {
       console.error('Error downloading template:', error);
       toast({ title: 'Error', description: 'Error downloading template. Please try again or contact support.', variant: 'destructive' });
     }
   };
 
-  const generateTemplate = () => {
+  const generateTemplate = async () => {
     try {
-      const XLSX = window.XLSX;
+      const XLSX = await import('xlsx-js-style').then(m => m.default);
 
       // Define template headers with Department column
       const headers = [
@@ -2828,9 +2910,7 @@ const handleCreateRevisionEvent = async () => {
         { wch: 30 }  // Remarks
       ];
 
-      // Add data validation for dropdown columns
-      // Note: XLSX doesn't directly support data validation in the browser
-      // But we can add instructions in the second row
+      // Add instruction row in the second row
       const instructionRow = [
         '1, 2, 3...',
         'Tag-001, Tag-002...',
@@ -2845,7 +2925,7 @@ const handleCreateRevisionEvent = async () => {
       ];
       XLSX.utils.sheet_add_aoa(worksheet, [instructionRow], { origin: 'A2' });
 
-      // Style the header row (bold)
+      // Style the header row (bold, gray background) using xlsx-js-style
       const headerRange = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:J1');
       for (let col = headerRange.s.c; col <= headerRange.e.c; col++) {
         const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col });
@@ -2858,19 +2938,20 @@ const handleCreateRevisionEvent = async () => {
       }
 
       // Add worksheet to workbook
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'VDCR Template');
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Documentation Template');
 
       // Generate Excel file and download
-      XLSX.writeFile(workbook, 'VDCR_Bulk_Upload_Template.xlsx');
+      XLSX.writeFile(workbook, 'Documentation_Bulk_Upload_Template.xlsx');
 
       // Show success message
-      toast({ 
-        title: 'Success', 
-        description: 'VDCR Template downloaded successfully!\n\n📋 Instructions:\n• Fill in your data in each column\n• Department column is optional\n• The system will auto-normalize formats:\n  - Sr. No.: Any format (1, 01, 001) → 001\n  - Revision: Any format → Rev-00, Rev-01, etc.\n  - Code Status: Any format → Code 1, Code 2, etc.\n• Upload the completed file' 
+      toast({
+        title: 'Success',
+        description: 'VDCR Template downloaded successfully!\n\n📋 Instructions:\n• Fill in your data in each column\n• Department column is optional\n• The system will auto-normalize formats:\n  - Sr. No.: Any format (1, 01, 001) → 001\n  - Revision: Any format → Rev-00, Rev-01, etc.\n  - Code Status: Any format → Code 1, Code 2, etc.\n• Upload the completed file'
       });
     } catch (error) {
       console.error('Error generating template:', error);
       toast({ title: 'Error', description: 'Error generating template. Please try again.', variant: 'destructive' });
+      throw error;
     }
   };
 
@@ -3588,68 +3669,262 @@ const handleCreateRevisionEvent = async () => {
     return acc;
   }, {} as Record<string, Equipment[]>);
 
-  // Excel Export Function
-  const exportToExcel = async () => {
-    try {
-      // Check if XLSX is already loaded
-      if (!window.XLSX) {
-        // Load xlsx from CDN
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        script.onload = () => processExcelExport();
-        script.onerror = () => {
-          toast({ title: 'Error', description: 'Failed to load Excel export library. Please try again.', variant: 'destructive' });
-        };
-        document.head.appendChild(script);
-      } else {
-        processExcelExport();
+  // Format date as dd-mm-yyyy for Excel
+  const formatDDMMYYYY = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  };
+
+  // Normalize date to YYYY-MM-DD for day calculations (same logic as VDCRRevisionHistory)
+  const normalizeDateToYYYYMMDD = (dateInput: string | Date | null | undefined): string | null => {
+    if (!dateInput) return null;
+    if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) return dateInput;
+    const date = new Date(dateInput);
+    if (isNaN(date.getTime())) return null;
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  // Display date for Excel e.g. "15-Dec-2025"
+  const formatDateDisplayForExcel = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const day = d.getDate();
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[d.getMonth()];
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  };
+
+  // Revision tracking for export: days with us, days with client, dates (matches VDCRRevisionHistory logic)
+  const getRevisionTrackingForExport = (
+    events: any[],
+    docStartDate: string | null | undefined,
+    projectSalesOrderDate: string | null | undefined
+  ): {
+    revisionMap: Map<string, { daysWithUs: number; daysWithClient: number; sentDate: string | null; receivedDate: string | null }>;
+    totalDaysWithUs: number;
+    totalDaysWithClient: number;
+    totalDays: number;
+  } => {
+    const revisionMap = new Map<string, { daysWithUs: number; daysWithClient: number; sentDate: string | null; receivedDate: string | null }>();
+    let totalDaysWithUs = 0;
+    let totalDaysWithClient = 0;
+    if (!events || events.length === 0) return { revisionMap, totalDaysWithUs, totalDaysWithClient, totalDays: 0 };
+
+    const sorted = [...events].sort((a, b) => {
+      const t1 = new Date(a.event_date).getTime();
+      const t2 = new Date(b.event_date).getTime();
+      if (t1 !== t2) return t1 - t2;
+      const aTie = (a as any).created_at || a.event_date;
+      const bTie = (b as any).created_at || b.event_date;
+      return new Date(aTie).getTime() - new Date(bTie).getTime();
+    });
+    const byRev = new Map<string, { submitted?: any; received?: any }>();
+    sorted.forEach((e: any) => {
+      const rev = e.revision_number || '00';
+      if (!byRev.has(rev)) byRev.set(rev, {});
+      const d = byRev.get(rev)!;
+      if (e.event_type === 'submitted') d.submitted = e;
+      else if (e.event_type === 'received') d.received = e;
+    });
+    const startDate = normalizeDateToYYYYMMDD(docStartDate) || normalizeDateToYYYYMMDD(projectSalesOrderDate);
+    const sortedRevisions = Array.from(byRev.entries()).sort((a, b) => {
+      const an = parseInt((a[0] || '0').replace(/\D/g, '')) || 0;
+      const bn = parseInt((b[0] || '0').replace(/\D/g, '')) || 0;
+      return an - bn;
+    });
+    let previousReceivedDate: string | null = null;
+
+    sortedRevisions.forEach(([rev, revEvents]) => {
+      const revNum = parseInt((rev || '0').replace(/\D/g, '')) || 0;
+      const sentDate = revEvents.submitted?.event_date || null;
+      const receivedDate = revEvents.received?.event_date || null;
+      const sentDateOnly = normalizeDateToYYYYMMDD(sentDate);
+      const receivedDateOnly = normalizeDateToYYYYMMDD(receivedDate);
+
+      let daysWithClient = 0;
+      if (sentDateOnly && receivedDateOnly) {
+        daysWithClient = calculateDaysBetween(sentDateOnly, receivedDateOnly);
+        totalDaysWithClient += daysWithClient;
       }
+
+      let daysWithUs = 0;
+      if (revNum === 0 && sentDateOnly && startDate) {
+        daysWithUs = calculateDaysBetween(startDate, sentDateOnly);
+        totalDaysWithUs += daysWithUs;
+      } else if (sentDateOnly && previousReceivedDate) {
+        const prevOnly = normalizeDateToYYYYMMDD(previousReceivedDate);
+        if (prevOnly) {
+          daysWithUs = calculateDaysBetween(prevOnly, sentDateOnly);
+          totalDaysWithUs += daysWithUs;
+        }
+      }
+      revisionMap.set(rev, { daysWithUs, daysWithClient, sentDate, receivedDate });
+      if (receivedDate) previousReceivedDate = receivedDate;
+    });
+
+    const totalDays = totalDaysWithUs + totalDaysWithClient;
+    return { revisionMap, totalDaysWithUs, totalDaysWithClient, totalDays };
+  };
+
+  // Ordered list of revision numbers from all records
+  const getOrderedRevisionList = (revisionEventsByRecordId: Record<string, any[]>): string[] => {
+    const allRevs = new Set<string>();
+    Object.values(revisionEventsByRecordId).forEach(events => {
+      (events || []).forEach((e: any) => allRevs.add(e.revision_number || '00'));
+    });
+    return Array.from(allRevs).sort((a, b) => {
+      const an = parseInt((a || '0').replace(/\D/g, '')) || 0;
+      const bn = parseInt((b || '0').replace(/\D/g, '')) || 0;
+      return an - bn;
+    });
+  };
+
+  const defaultRemarksEntry = { notes: '', hasNotable: false, notableTitle: null as string | null };
+
+  // Build per-revision remarks (notes + notable change) for Sheet 3
+  const getRevisionRemarksFromEvents = (events: any[]): Map<string, {
+    submitted: { notes: string; hasNotable: boolean; notableTitle: string | null };
+    received: { notes: string; hasNotable: boolean; notableTitle: string | null };
+  }> => {
+    const map = new Map<string, { submitted: typeof defaultRemarksEntry; received: typeof defaultRemarksEntry }>();
+    if (!events || events.length === 0) return map as any;
+    const sorted = [...events].sort((a, b) => {
+      const t1 = new Date(a.event_date).getTime();
+      const t2 = new Date(b.event_date).getTime();
+      if (t1 !== t2) return t1 - t2;
+      const aTie = (a as any).created_at || a.event_date;
+      const bTie = (b as any).created_at || b.event_date;
+      return new Date(aTie).getTime() - new Date(bTie).getTime();
+    });
+    sorted.forEach((e: any) => {
+      const rev = e.revision_number || '00';
+      if (!map.has(rev)) map.set(rev, { submitted: { ...defaultRemarksEntry }, received: { ...defaultRemarksEntry } });
+      const d = map.get(rev)!;
+      const entry = {
+        notes: e.notes || '',
+        hasNotable: !!e.has_notable_change,
+        notableTitle: e.notable_change_title?.trim() || null
+      };
+      if (e.event_type === 'submitted') d.submitted = entry;
+      else if (e.event_type === 'received') d.received = entry;
+    });
+    return map as any;
+  };
+
+  // Format remarks cell: "Notable: [title]\n[notes]" when notable (bold), else notes. Returns cell object { t, v, s? }.
+  const formatRemarksCell = (entry: { notes: string; hasNotable: boolean; notableTitle: string | null } | undefined): { t: string; v: string; s?: any } => {
+    if (!entry) return { t: 's', v: '' };
+    const title = entry.notableTitle || 'Notable change';
+    const text = entry.hasNotable
+      ? `Notable: ${title}${entry.notes ? '\n' + entry.notes : ''}`
+      : entry.notes || '';
+    const s = entry.hasNotable ? { font: { bold: true } } : undefined;
+    return { t: 's', v: text, ...(s ? { s } : {}) };
+  };
+
+  // VDCR blue theme for Excel headers (blue-600 bg, white bold text)
+  const EXCEL_HEADER_STYLE = {
+    fill: { fgColor: { rgb: 'FF2563EB' } },
+    font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 11 }
+  };
+  const EXCEL_SUBHEADER_STYLE = {
+    fill: { fgColor: { rgb: 'FFDBEAFE' } },
+    font: { bold: true, color: { rgb: 'FF1D4ED8' }, sz: 10 }
+  };
+
+  // Open export modal (user picks which reports to download as separate files)
+  const openExportModal = () => setExportModalOpen(true);
+
+  const runExportSelected = async () => {
+    const selected: ExportReportId[] = (['vdcr-records', 'revision-history', 'revision-remarks'] as ExportReportId[]).filter(id => exportSelected[id]);
+    if (selected.length === 0) {
+      toast({ title: 'Select at least one report', description: 'Choose one or more reports to export.', variant: 'destructive' });
+      return;
+    }
+    setExporting(true);
+    try {
+      await processExcelExport(selected);
+      setExportModalOpen(false);
+      const fileCount = selected.length >= 2 ? 1 : selected.length;
+      toast({ title: 'Export complete', description: selected.length >= 2 ? 'Reports exported in one Excel file (multiple sheets).' : 'Report downloaded.' });
     } catch (error) {
-      // console.error('Error exporting to Excel:', error);
-      toast({ title: 'Error', description: 'Error exporting to Excel. Please try again.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Error exporting. Please try again.', variant: 'destructive' });
+    } finally {
+      setExporting(false);
     }
   };
 
-  const processExcelExport = () => {
+  const processExcelExport = async (selectedReports: ExportReportId[]) => {
     try {
-      const XLSX = window.XLSX;
+    const XLSX = await import('xlsx-js-style').then(m => m.default);
 
-      // Prepare data for Excel export
-      const excelData = vdcrData.map((record, index) => {
-        // Check if all equipment are selected
-        const allEquipmentTagNos = equipmentData.map(eq => eq.tagNo);
-        const isAllSelected = record.equipmentTagNo.length > 0 && 
+    // Ensure we have project data for documentation start date fallback (Sheet 2 & 3)
+    let projectForExport = projectData;
+    if (!projectForExport) {
+      try {
+        const project = await fastAPI.getProjectById(projectId);
+        projectForExport = project && project.length > 0 ? project[0] : null;
+      } catch {
+        projectForExport = null;
+      }
+    }
+    const projectSalesOrderDate = projectForExport?.sales_order_date ?? null;
+
+    // Fetch revision events for all VDCR records (for Sheet 2 & 3)
+    const revisionEventsByRecordId: Record<string, any[]> = {};
+    await Promise.all(vdcrData.map(async (record) => {
+      try {
+        const events = await fastAPI.getVDCRRevisionEvents(record.id);
+        revisionEventsByRecordId[record.id] = Array.isArray(events) ? events : [];
+      } catch {
+        revisionEventsByRecordId[record.id] = [];
+      }
+    }));
+
+    const currentDate = new Date().toISOString().split('T')[0];
+    const allEquipmentTagNos = equipmentData.map(eq => eq.tagNo);
+
+    // Sheet 1: VDCR Records (column "Equipment Title" instead of "Mfg Serial No.")
+    const excelData = vdcrData.map((record) => {
+        const isAllSelected = record.equipmentTagNo.length > 0 &&
           allEquipmentTagNos.length > 0 &&
           record.equipmentTagNo.length === allEquipmentTagNos.length &&
           allEquipmentTagNos.every(tag => record.equipmentTagNo.includes(tag));
-        
+
         return {
-        'Sr. No.': record.srNo,
+          'Sr. No.': record.srNo,
           'Equipment Tag': isAllSelected ? 'All Equipments' : record.equipmentTagNo.join(', '),
-          'Mfg Serial No.': isAllSelected ? 'All Equipments' : record.mfgSerialNo.join(', '),
+          'Equipment Title': isAllSelected ? 'All Equipments' : record.mfgSerialNo.join(', '),
           'Job No.': isAllSelected ? 'All Equipments' : record.jobNo.join(', '),
-        'Client Doc No.': record.clientDocNo,
-        'Internal Doc No.': record.internalDocNo,
-        'Document Name': record.documentName,
-        'Revision': record.revision,
-        'Code Status': record.codeStatus,
-        'Status': getStatusText(record.status),
-        'Department': record.department || '',
-        'Remarks': record.remarks || '',
-        'Updated On': record.lastUpdate,
-        'Updated By': record.updatedBy || 'Unknown'
+          'Client Doc No.': record.clientDocNo,
+          'Internal Doc No.': record.internalDocNo,
+          'Document Name': record.documentName,
+          'Revision': record.revision,
+          'Code Status': record.codeStatus,
+          'Status': getStatusText(record.status),
+          'Department': record.department || '',
+          'Remarks': record.remarks || '',
+          'Updated On': record.lastUpdate,
+          'Updated By': record.updatedBy || 'Unknown'
         };
       });
 
-      // Create workbook and worksheet
-      const workbook = XLSX.utils.book_new();
-      const worksheet = XLSX.utils.json_to_sheet(excelData);
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
 
-      // Set column widths
-      const columnWidths = [
+    const columnWidths = [
         { wch: 10 }, // Sr. No.
         { wch: 20 }, // Equipment Tag
-        { wch: 20 }, // Mfg Serial No.
+        { wch: 20 }, // Equipment Title
         { wch: 15 }, // Job No.
         { wch: 20 }, // Client Doc No.
         { wch: 20 }, // Internal Doc No.
@@ -3657,38 +3932,203 @@ const handleCreateRevisionEvent = async () => {
         { wch: 10 }, // Revision
         { wch: 12 }, // Code Status
         { wch: 20 }, // Status
+        { wch: 15 }, // Department
         { wch: 30 }, // Remarks
         { wch: 15 }, // Updated On
         { wch: 20 }  // Updated By
       ];
-      worksheet['!cols'] = columnWidths;
-
-      // Add worksheet to workbook
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'VDCR Records');
-
-      // Generate filename with current date
-      const currentDate = new Date().toISOString().split('T')[0];
-      const filename = `${projectName}_VDCR_Records_${currentDate}.xlsx`;
-
-      // Save the file
-      XLSX.writeFile(workbook, filename);
-
-      // Show success message
-      const successToast = document.createElement('div');
-      successToast.style.cssText = `
-        position: fixed; top: 20px; right: 20px; z-index: 9999;
-        background: #10b981; color: white; padding: 12px 20px;
-        border-radius: 8px; font-family: system-ui; font-size: 14px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      `;
-      successToast.textContent = `✅ Excel file exported successfully: ${filename}`;
-      document.body.appendChild(successToast);
-      setTimeout(() => document.body.removeChild(successToast), 3000);
-
-    } catch (error) {
-      // console.error('Error processing Excel export:', error);
-      toast({ title: 'Error', description: 'Error processing Excel export. Please try again.', variant: 'destructive' });
+    worksheet['!cols'] = columnWidths;
+    // Style Sheet 1 header row (VDCR blue theme)
+    const sheet1Range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+    for (let col = sheet1Range.s.c; col <= sheet1Range.e.c; col++) {
+      const cellRef = XLSX.utils.encode_cell({ r: 0, c: col });
+      if (worksheet[cellRef]) worksheet[cellRef].s = EXCEL_HEADER_STYLE;
     }
+
+    // Sheet 2: Revision History — Documentation Start Date, then per-revision "Submitted In" / "Received In" (X days (date)), then Total days columns
+      const revisionList = getOrderedRevisionList(revisionEventsByRecordId);
+      const revColCount = revisionList.length * 2;
+      const baseCols = 5; // Sr. No., Doc Name, Equipment Tag No., Documentation Start Date, Total Revisions
+      const totalCols = baseCols + revColCount + 3; // + Total days with us, Total days with client, Total days
+      const encodeCell = (r: number, c: number) => XLSX.utils.encode_cell({ r, c });
+
+      const worksheet2: any = {};
+      const headerS = EXCEL_HEADER_STYLE;
+      const subheadS = EXCEL_SUBHEADER_STYLE;
+      // Row 0: Sr. No., Doc Name, Equipment Tag No., Documentation Start Date, Total Revisions, then Rev-00 (merged), Rev-01 (merged), ..., then 3 total cols (no merge)
+      worksheet2[encodeCell(0, 0)] = { t: 's', v: 'Sr. No.', s: headerS };
+      worksheet2[encodeCell(0, 1)] = { t: 's', v: 'Doc Name', s: headerS };
+      worksheet2[encodeCell(0, 2)] = { t: 's', v: 'Equipment Tag No.', s: headerS };
+      worksheet2[encodeCell(0, 3)] = { t: 's', v: 'Documentation Start Date', s: headerS };
+      worksheet2[encodeCell(0, 4)] = { t: 's', v: 'Total Revisions', s: headerS };
+      revisionList.forEach((rev, i) => {
+        const c = baseCols + i * 2;
+        const revDisplay = (rev || '00').replace(/^Rev-?/i, '') || '00';
+        worksheet2[encodeCell(0, c)] = { t: 's', v: `Rev-${revDisplay}`, s: headerS };
+        worksheet2[encodeCell(0, c + 1)] = { t: 's', v: '', s: headerS };
+      });
+      worksheet2[encodeCell(0, baseCols + revColCount)] = { t: 's', v: 'Total days with us', s: headerS };
+      worksheet2[encodeCell(0, baseCols + revColCount + 1)] = { t: 's', v: 'Total days with client', s: headerS };
+      worksheet2[encodeCell(0, baseCols + revColCount + 2)] = { t: 's', v: 'Total days', s: headerS };
+      // Row 1: empty for first 5 cols, then "Submitted In", "Received In" for each revision, then empty for last 3
+      for (let c = 0; c < baseCols; c++) worksheet2[encodeCell(1, c)] = { t: 's', v: '', s: subheadS };
+      revisionList.forEach((_, i) => {
+        const c = baseCols + i * 2;
+        worksheet2[encodeCell(1, c)] = { t: 's', v: 'Submitted In', s: subheadS };
+        worksheet2[encodeCell(1, c + 1)] = { t: 's', v: 'Received In', s: subheadS };
+      });
+      worksheet2[encodeCell(1, baseCols + revColCount)] = { t: 's', v: '', s: subheadS };
+      worksheet2[encodeCell(1, baseCols + revColCount + 1)] = { t: 's', v: '', s: subheadS };
+      worksheet2[encodeCell(1, baseCols + revColCount + 2)] = { t: 's', v: '', s: subheadS };
+      // Data rows (starting row 2)
+      vdcrData.forEach((record, rowIndex) => {
+        const events = revisionEventsByRecordId[record.id] || [];
+        const docStartDate = (record as any).projectDocumentationStartDate ?? null;
+        const tracking = getRevisionTrackingForExport(events, docStartDate, projectSalesOrderDate);
+        const uniqueRevisions = new Set(events.map((e: any) => e.revision_number || '00'));
+        const isAllEquipments = record.equipmentTagNo.length > 0 && allEquipmentTagNos.length > 0 &&
+          record.equipmentTagNo.length === allEquipmentTagNos.length &&
+          allEquipmentTagNos.every(tag => record.equipmentTagNo.includes(tag));
+        const equipmentTagDisplay = isAllEquipments ? 'All Equipments' : record.equipmentTagNo.join(', ');
+        const docStartDisplay = docStartDate || projectSalesOrderDate
+          ? formatDDMMYYYY(docStartDate || projectSalesOrderDate)
+          : '';
+        const r = 2 + rowIndex;
+        worksheet2[encodeCell(r, 0)] = { t: 's', v: String(record.srNo) };
+        worksheet2[encodeCell(r, 1)] = { t: 's', v: record.documentName };
+        worksheet2[encodeCell(r, 2)] = { t: 's', v: equipmentTagDisplay };
+        worksheet2[encodeCell(r, 3)] = { t: 's', v: docStartDisplay };
+        worksheet2[encodeCell(r, 4)] = { t: 'n', v: uniqueRevisions.size };
+        revisionList.forEach((rev, i) => {
+          const raw = tracking.revisionMap.get(rev);
+          const normalized = (rev || '').replace(/^Rev-?/i, '') || '00';
+          const d = raw ?? tracking.revisionMap.get(normalized) ?? tracking.revisionMap.get('Rev-' + normalized);
+          const submittedIn = d
+            ? (d.daysWithUs >= 0 && d.sentDate
+              ? `${d.daysWithUs} days (${formatDateDisplayForExcel(d.sentDate)})`
+              : d.sentDate ? formatDateDisplayForExcel(d.sentDate) : '')
+            : '';
+          const receivedIn = d
+            ? (d.daysWithClient >= 0 && d.receivedDate
+              ? `${d.daysWithClient} days (${formatDateDisplayForExcel(d.receivedDate)})`
+              : d.receivedDate ? formatDateDisplayForExcel(d.receivedDate) : '')
+            : '';
+          const c = baseCols + i * 2;
+          worksheet2[encodeCell(r, c)] = { t: 's', v: submittedIn };
+          worksheet2[encodeCell(r, c + 1)] = { t: 's', v: receivedIn };
+        });
+        worksheet2[encodeCell(r, baseCols + revColCount)] = { t: 'n', v: tracking.totalDaysWithUs };
+        worksheet2[encodeCell(r, baseCols + revColCount + 1)] = { t: 'n', v: tracking.totalDaysWithClient };
+        worksheet2[encodeCell(r, baseCols + revColCount + 2)] = { t: 'n', v: tracking.totalDays };
+      });
+
+      const lastRow = vdcrData.length > 0 ? 2 + vdcrData.length - 1 : 1;
+      worksheet2['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow, c: totalCols - 1 } });
+      worksheet2['!merges'] = revisionList.map((_, i) => ({
+        s: { r: 0, c: baseCols + i * 2 },
+        e: { r: 0, c: baseCols + i * 2 + 1 }
+      }));
+      worksheet2['!cols'] = [
+        { wch: 8 },
+        { wch: 40 },
+        { wch: 28 },
+        { wch: 22 },
+        { wch: 16 },
+        ...revisionList.flatMap(() => [{ wch: 28 }, { wch: 28 }]),
+        { wch: 18 },
+        { wch: 22 },
+        { wch: 14 }
+      ];
+    // Sheet 3: Revision Remarks — same layout as Sheet 2 but with Submitted (Remarks) / Commented (Remarks); notable change title in bold
+      const totalColsSheet3 = baseCols + revColCount;
+      const worksheet3: any = {};
+      worksheet3[encodeCell(0, 0)] = { t: 's', v: 'Sr. No.', s: headerS };
+      worksheet3[encodeCell(0, 1)] = { t: 's', v: 'Doc Name', s: headerS };
+      worksheet3[encodeCell(0, 2)] = { t: 's', v: 'Equipment Tag No.', s: headerS };
+      worksheet3[encodeCell(0, 3)] = { t: 's', v: 'Documentation Start Date', s: headerS };
+      worksheet3[encodeCell(0, 4)] = { t: 's', v: 'Total Revisions', s: headerS };
+      revisionList.forEach((rev, i) => {
+        const c = baseCols + i * 2;
+        const revDisplay = (rev || '00').replace(/^Rev-?/i, '') || '00';
+        worksheet3[encodeCell(0, c)] = { t: 's', v: `Rev-${revDisplay}`, s: headerS };
+        worksheet3[encodeCell(0, c + 1)] = { t: 's', v: '', s: headerS };
+      });
+      for (let c = 0; c < baseCols; c++) worksheet3[encodeCell(1, c)] = { t: 's', v: '', s: subheadS };
+      revisionList.forEach((_, i) => {
+        const c = baseCols + i * 2;
+        worksheet3[encodeCell(1, c)] = { t: 's', v: 'Submitted (Remarks)', s: subheadS };
+        worksheet3[encodeCell(1, c + 1)] = { t: 's', v: 'Commented (Remarks)', s: subheadS };
+      });
+      vdcrData.forEach((record, rowIndex) => {
+        const events = revisionEventsByRecordId[record.id] || [];
+        const remarksMap = getRevisionRemarksFromEvents(events);
+        const uniqueRevisions = new Set(events.map((e: any) => e.revision_number || '00'));
+        const isAllEquipments = record.equipmentTagNo.length > 0 && allEquipmentTagNos.length > 0 &&
+          record.equipmentTagNo.length === allEquipmentTagNos.length &&
+          allEquipmentTagNos.every(tag => record.equipmentTagNo.includes(tag));
+        const equipmentTagDisplay = isAllEquipments ? 'All Equipments' : record.equipmentTagNo.join(', ');
+        const docStartDisplay = (record as any).projectDocumentationStartDate || projectSalesOrderDate
+          ? formatDDMMYYYY((record as any).projectDocumentationStartDate || projectSalesOrderDate)
+          : '';
+        const r = 2 + rowIndex;
+        worksheet3[encodeCell(r, 0)] = { t: 's', v: String(record.srNo) };
+        worksheet3[encodeCell(r, 1)] = { t: 's', v: record.documentName };
+        worksheet3[encodeCell(r, 2)] = { t: 's', v: equipmentTagDisplay };
+        worksheet3[encodeCell(r, 3)] = { t: 's', v: docStartDisplay };
+        worksheet3[encodeCell(r, 4)] = { t: 'n', v: uniqueRevisions.size };
+        revisionList.forEach((rev, i) => {
+          const raw = remarksMap.get(rev);
+          const normalized = (rev || '').replace(/^Rev-?/i, '') || '00';
+          const d = raw ?? remarksMap.get(normalized) ?? remarksMap.get('Rev-' + normalized);
+          const subCell = formatRemarksCell(d?.submitted);
+          const recCell = formatRemarksCell(d?.received);
+          const c = baseCols + i * 2;
+          worksheet3[encodeCell(r, c)] = subCell;
+          worksheet3[encodeCell(r, c + 1)] = recCell;
+        });
+      });
+      const lastRowSheet3 = vdcrData.length > 0 ? 2 + vdcrData.length - 1 : 1;
+      worksheet3['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRowSheet3, c: totalColsSheet3 - 1 } });
+      worksheet3['!merges'] = revisionList.map((_, i) => ({
+        s: { r: 0, c: baseCols + i * 2 },
+        e: { r: 0, c: baseCols + i * 2 + 1 }
+      }));
+      worksheet3['!cols'] = [
+        { wch: 8 },
+        { wch: 40 },
+        { wch: 28 },
+        { wch: 22 },
+        { wch: 16 },
+        ...revisionList.flatMap(() => [{ wch: 36 }, { wch: 36 }])
+      ];
+    // Export: 2+ selected = one Excel file with multiple sheets; 1 selected = one file
+    const safeName = (s: string) => s.replace(/[/\\?*:[\]"]/g, '-').replace(/\s+/g, '_');
+    const baseName = safeName(projectName);
+
+    if (selectedReports.length >= 2) {
+      const wb = XLSX.utils.book_new();
+      if (selectedReports.includes('vdcr-records')) XLSX.utils.book_append_sheet(wb, worksheet, 'VDCR Records');
+      if (selectedReports.includes('revision-history')) XLSX.utils.book_append_sheet(wb, worksheet2, 'Revision History');
+      if (selectedReports.includes('revision-remarks')) XLSX.utils.book_append_sheet(wb, worksheet3, 'Revision Remarks');
+      XLSX.writeFile(wb, `${baseName}_VDCR_Reports_${currentDate}.xlsx`);
+    } else {
+      const id = selectedReports[0];
+      const wb = XLSX.utils.book_new();
+      if (id === 'vdcr-records') {
+        XLSX.utils.book_append_sheet(wb, worksheet, 'VDCR Records');
+        XLSX.writeFile(wb, `${baseName}_VDCR_Records_${currentDate}.xlsx`);
+      } else if (id === 'revision-history') {
+        XLSX.utils.book_append_sheet(wb, worksheet2, 'Revision History');
+        XLSX.writeFile(wb, `${baseName}_Revision_History_${currentDate}.xlsx`);
+      } else if (id === 'revision-remarks') {
+        XLSX.utils.book_append_sheet(wb, worksheet3, 'Revision Remarks');
+        XLSX.writeFile(wb, `${baseName}_Revision_Remarks_${currentDate}.xlsx`);
+      }
+    }
+  } catch (error) {
+    toast({ title: 'Error', description: 'Error processing Excel export. Please try again.', variant: 'destructive' });
+    throw error;
+  }
   };
 
   return (
@@ -3696,7 +4136,7 @@ const handleCreateRevisionEvent = async () => {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 sm:gap-4 mb-6">
         <div className="flex items-start lg:items-center min-w-0 flex-1">
           <h2 className="text-base sm:text-lg lg:text-xl font-semibold text-foreground leading-snug break-words">
-            {projectName} - VDCR Management
+            {projectName} - Documentation Management
           </h2>
         </div>
         <div className="flex flex-col min-[1024px]:flex-row flex-wrap items-stretch min-[1024px]:items-center gap-2 flex-shrink-0">
@@ -3707,7 +4147,7 @@ const handleCreateRevisionEvent = async () => {
               onClick={handleBulkUpload}
             >
               <FileText size={14} className="mr-1 sm:mr-2" />
-              <span className="hidden sm:inline">Bulk Upload VDCR</span>
+              <span className="hidden sm:inline">Bulk Upload Documents</span>
               <span className="sm:hidden">Bulk Upload</span>
             </Button>
           )}
@@ -3721,27 +4161,118 @@ const handleCreateRevisionEvent = async () => {
                 onClick={handleAddNewVDCR}
               >
                 <Edit size={14} className="mr-1 sm:mr-2" />
-                <span className="hidden sm:inline">Update VDCR</span>
-                <span className="sm:hidden">Update</span>
+                <span className="hidden sm:inline">Add New Document</span>
+                <span className="sm:hidden">Add New</span>
               </Button>
             )}
 
             <Button
               size="sm"
               variant="outline"
-              onClick={exportToExcel}
+              onClick={openExportModal}
               className="flex-1 min-[1024px]:flex-initial bg-white hover:bg-gray-50 text-gray-700 border-gray-300 hover:border-gray-400 hover:text-gray-800"
             >
               <Download size={14} className="mr-2" />
-              Export to Excel
+              Export Excel Reports
             </Button>
           </div>
+
+          {/* Export reports modal: choose which reports to download as separate Excel files */}
+          <Dialog open={exportModalOpen} onOpenChange={setExportModalOpen}>
+            <DialogContent className="sm:max-w-lg p-0 overflow-hidden rounded-xl border border-gray-200 shadow-xl">
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50/50 px-6 pt-6 pb-4 border-b border-blue-100">
+                <DialogHeader>
+                  <DialogTitle className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                    <Download className="h-5 w-5 text-blue-600" />
+                    Export documentation reports
+                  </DialogTitle>
+                  <DialogDescription className="text-sm text-gray-600 mt-1">
+                    Choose one or more reports to download as separate Excel files.
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto">
+                {/* VDCR Records */}
+                <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${exportSelected['vdcr-records'] ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 bg-white hover:border-blue-200 hover:bg-gray-50/50'}`}>
+                  <Checkbox
+                    checked={exportSelected['vdcr-records']}
+                    onCheckedChange={(c) => setExportSelected(prev => ({ ...prev, 'vdcr-records': !!c }))}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0 flex gap-3">
+                    <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                      <LayoutList className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-900">VDCR Records</div>
+                      <p className="text-sm text-gray-600 mt-0.5">All documentation records: equipment, doc numbers, revision, status, department, and last updated.</p>
+                    </div>
+                  </div>
+                </label>
+                {/* Revision History */}
+                <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${exportSelected['revision-history'] ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 bg-white hover:border-blue-200 hover:bg-gray-50/50'}`}>
+                  <Checkbox
+                    checked={exportSelected['revision-history']}
+                    onCheckedChange={(c) => setExportSelected(prev => ({ ...prev, 'revision-history': !!c }))}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0 flex gap-3">
+                    <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                      <History className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-900">Revision History</div>
+                      <p className="text-sm text-gray-600 mt-0.5">Per-revision submission and receipt dates, days with us and with client, and total days.</p>
+                    </div>
+                  </div>
+                </label>
+                {/* Revision Remarks */}
+                <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${exportSelected['revision-remarks'] ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 bg-white hover:border-blue-200 hover:bg-gray-50/50'}`}>
+                  <Checkbox
+                    checked={exportSelected['revision-remarks']}
+                    onCheckedChange={(c) => setExportSelected(prev => ({ ...prev, 'revision-remarks': !!c }))}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0 flex gap-3">
+                    <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                      <MessageSquare className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-900">Revision Remarks</div>
+                      <p className="text-sm text-gray-600 mt-0.5">Submitted and commented remarks for each revision, with notable changes highlighted in bold.</p>
+                    </div>
+                  </div>
+                </label>
+              </div>
+              <p className="text-xs text-gray-500 px-4 pb-2 leading-relaxed border-t pt-3 mx-4 bg-amber-50/60 rounded-lg p-3 border border-amber-200/80">
+                <strong className="text-amber-800">Tip:</strong> To have 2 or more reports in the same Excel file (as different sheets), select them together and export. If you want them individually, select and download one at a time.
+              </p>
+              <DialogFooter className="p-4 pt-2 border-t bg-gray-50/50 flex-row gap-2 sm:gap-2">
+                <Button variant="outline" onClick={() => setExportModalOpen(false)} disabled={exporting}>
+                  Cancel
+                </Button>
+                <Button onClick={runExportSelected} disabled={exporting}>
+                  {exporting ? (
+                    <>
+                      <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent inline-block mr-2" />
+                      Exporting…
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4 mr-2" />
+                      Export selected
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
             <DialogContent className="w-[95vw] max-w-6xl max-h-[85vh] sm:max-h-[90vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
               <DialogHeader>
                 <DialogTitle className="text-lg sm:text-2xl font-bold text-gray-800 break-words pr-8">
-                  {isAddingNew ? 'Add New VDCR Record' : 'Edit VDCR Record'}
+                  {isAddingNew ? 'Add New Documentation Record' : 'Edit Documentation Record'}
                 </DialogTitle>
               </DialogHeader>
 
@@ -3834,18 +4365,26 @@ const handleCreateRevisionEvent = async () => {
                             ? 'bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700 hover:text-blue-800 cursor-pointer'
                             : 'bg-gray-100 border-gray-300 text-gray-400 cursor-not-allowed opacity-60'
                         }`}
-                        onClick={() => setRevisionEventModal({
-                          isOpen: true,
-                          eventType: 'submitted',
-                          eventDate: new Date().toISOString().split('T')[0], // Default to today
-                          estimatedReturnDate: '',
-                          targetSubmissionDate: '',
-                          notes: '',
-                          documentFile: null,
-                          documentUrl: null,
-                          isUploadingDocument: false,
-                          uploadAbortController: null
-                        })}
+                        onClick={() => {
+                          const today = new Date().toISOString().split('T')[0];
+                          const effectiveRevNum = getEffectiveRevNumForSubmitted(formData.revision, editingVDCR?.revisionEvents);
+                          const cycleTime = getCycleTimeForRevision(effectiveRevNum);
+                          const autoReturn = cycleTime != null ? addDaysToDate(today, cycleTime) : '';
+                          setRevisionEventModal({
+                            isOpen: true,
+                            eventType: 'submitted',
+                            eventDate: today,
+                            estimatedReturnDate: autoReturn,
+                            targetSubmissionDate: '',
+                            notes: '',
+                            documentFile: null,
+                            documentUrl: null,
+                            isUploadingDocument: false,
+                            uploadAbortController: null,
+                            hasNotableChange: false,
+                            notableChangeTitle: ''
+                          });
+                        }}
                       >
                         <Send className="w-4 h-4 mr-2" />
                         Submitted
@@ -3859,18 +4398,27 @@ const handleCreateRevisionEvent = async () => {
                             ? 'bg-green-50 hover:bg-green-100 border-green-300 text-green-700 hover:text-green-800 cursor-pointer'
                             : 'bg-gray-100 border-gray-300 text-gray-400 cursor-not-allowed opacity-60'
                         }`}
-                        onClick={() => setRevisionEventModal({
-                          isOpen: true,
-                          eventType: 'received',
-                          eventDate: new Date().toISOString().split('T')[0], // Default to today
-                          estimatedReturnDate: '',
-                          targetSubmissionDate: '',
-                          notes: '',
-                          documentFile: null,
-                          documentUrl: null,
-                          isUploadingDocument: false,
-                          uploadAbortController: null
-                        })}
+                        onClick={() => {
+                          const today = new Date().toISOString().split('T')[0];
+                          const revMatch = formData.revision.match(/Rev-?(\d+)/i) || formData.revision.match(/(\d+)/);
+                          const revNum = revMatch ? parseInt(revMatch[1], 10) : 0;
+                          const cycleTime = getCycleTimeForRevision(revNum + 1); // Next submission = next rev
+                          const autoTarget = cycleTime != null ? addDaysToDate(today, cycleTime) : '';
+                          setRevisionEventModal({
+                            isOpen: true,
+                            eventType: 'received',
+                            eventDate: today,
+                            estimatedReturnDate: '',
+                            targetSubmissionDate: autoTarget,
+                            notes: '',
+                            documentFile: null,
+                            documentUrl: null,
+                            isUploadingDocument: false,
+                            uploadAbortController: null,
+                            hasNotableChange: false,
+                            notableChangeTitle: ''
+                          });
+                        }}
                       >
                         <Download className="w-4 h-4 mr-2" />
                         Commented
@@ -4020,7 +4568,7 @@ const handleCreateRevisionEvent = async () => {
                             size="sm"
                             onClick={() => toggleFieldLock('revision')}
                             className="h-6 px-2 text-xs"
-                            title={fieldLocks.revision ? 'Click to unlock and edit (auto-increments when locked)' : 'Click to lock (will auto-increment on changes)'}
+                            title={fieldLocks.revision ? 'Click to unlock and edit. Revision only changes when you click Submitted or Commented.' : 'Click to lock. Revision only changes when you click Submitted or Commented.'}
                           >
                             {fieldLocks.revision ? (
                               <Lock className="w-3 h-3 text-gray-500" />
@@ -4088,10 +4636,10 @@ const handleCreateRevisionEvent = async () => {
                           }}
                           disabled={fieldLocks.revision}
                           className="mt-1"
-                          placeholder="Auto-increments when locked"
+                          placeholder="Rev-00 (changes only via Submitted/Commented)"
                         />
                         {fieldLocks.revision && (
-                          <p className="text-xs text-gray-500 mt-1">Auto-increments by +1 when document changes</p>
+                          <p className="text-xs text-gray-500 mt-1">Changes only when you click Submitted or Commented</p>
                         )}
                       </div>
                     </div>
@@ -4615,10 +5163,10 @@ const handleCreateRevisionEvent = async () => {
             <DialogContent className="w-[95vw] max-w-5xl max-h-[85vh] sm:max-h-[90vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
               <DialogHeader>
                 <DialogTitle className="text-lg sm:text-2xl font-bold text-gray-800 break-words pr-8">
-                  Bulk Upload VDCR Records
+                  Bulk Upload Documentation Records
                 </DialogTitle>
                 <p className="text-sm sm:text-base text-gray-600 mt-2">
-                  Upload multiple VDCR records using predefined templates
+                  Upload multiple documentation records using predefined templates
                 </p>
               </DialogHeader>
 
@@ -4731,7 +5279,7 @@ const handleCreateRevisionEvent = async () => {
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
                       <span className="text-lg font-medium">Processing bulk upload...</span>
                     </div>
-                    <p className="text-gray-600 mt-2">Please wait while we import your VDCR records</p>
+                    <p className="text-gray-600 mt-2">Please wait while we import your documentation records</p>
                   </div>
                 )}
               </div>
@@ -4748,7 +5296,7 @@ const handleCreateRevisionEvent = async () => {
                 {bulkUploadModal.previewData.length > 0 && !bulkUploadModal.isProcessing && (
                   <Button
                     onClick={processBulkUpload}
-                    className="w-full sm:w-auto bg-purple-600 hover:bg-purple-700"
+                    className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700"
                   >
                     <FileText size={16} className="mr-2" />
                     Import {bulkUploadModal.previewData.length} Records
@@ -5495,7 +6043,7 @@ const handleCreateRevisionEvent = async () => {
           <div className="flex items-center justify-center py-12">
             <div className="flex items-center space-x-3">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="text-lg font-medium text-gray-600">Loading VDCR records...</span>
+              <span className="text-lg font-medium text-gray-600">Loading documentation records...</span>
             </div>
           </div>
         ) : (
@@ -5508,6 +6056,70 @@ const handleCreateRevisionEvent = async () => {
                 totalCount={vdcrData.length}
               />
             </div>
+
+            {/* VDCR Cycle Time Configuration */}
+            <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="cycleTimeRev00" className="text-sm font-medium text-gray-700 whitespace-nowrap">Rev 00 cycle time (days):</Label>
+                  <Input
+                    id="cycleTimeRev00"
+                    type="number"
+                    min={1}
+                    max={365}
+                    placeholder="e.g. 21"
+                    value={cycleTimeRev00}
+                    onChange={(e) => {
+                      setCycleTimeSaveSuccess(false);
+                      setCycleTimeRev00(e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value, 10) || 0));
+                    }}
+                    className="w-20 h-8 text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="cycleTimeRev01Plus" className="text-sm font-medium text-gray-700 whitespace-nowrap">Rev 01 & further (days):</Label>
+                  <Input
+                    id="cycleTimeRev01Plus"
+                    type="number"
+                    min={1}
+                    max={365}
+                    placeholder="e.g. 10"
+                    value={cycleTimeRev01Plus}
+                    onChange={(e) => {
+                      setCycleTimeSaveSuccess(false);
+                      setCycleTimeRev01Plus(e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value, 10) || 0));
+                    }}
+                    className="w-20 h-8 text-sm"
+                  />
+                </div>
+                {cycleTimeSaveSuccess ? (
+                  <button
+                    type="button"
+                    onClick={() => setCycleTimeSaveSuccess(false)}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                    title="Edit cycle time"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSaveCycleTime}
+                    disabled={isSavingCycleTime}
+                    className="h-8 bg-white hover:bg-gray-50 border-gray-300 text-gray-700"
+                  >
+                    {isSavingCycleTime ? 'Saving...' : 'Save Cycle Time'}
+                  </Button>
+                )}
+                <p className="text-xs text-gray-600 max-w-md">
+                  Cycle time = days allowed for response after receipt/submission. Used to auto-calculate expected return &amp; next submission dates.
+                </p>
+              </div>
+            </div>
+
+            <div className="h-px bg-gray-200 mt-2" aria-hidden="true" />
+
           <div className="p-0 overflow-x-auto">
                 {filteredVDCRData.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 space-y-4 px-6">
@@ -5515,7 +6127,7 @@ const handleCreateRevisionEvent = async () => {
                           <FileText className="w-8 h-8 text-gray-400" />
                         </div>
                 <div className="text-center">
-                  <p className="text-lg font-medium text-gray-900">No VDCR Records Found</p>
+                  <p className="text-lg font-medium text-gray-900">No Documentation Records Found</p>
                           <p className="text-sm text-gray-500 mt-1">
                             {searchQuery.trim() 
                               ? `No records match your search "${searchQuery}"` 
@@ -5529,7 +6141,7 @@ const handleCreateRevisionEvent = async () => {
                     className="mt-4 border-gray-300"
                           >
                             <Plus className="w-4 h-4 mr-2" />
-                            Add New VDCR Record
+                            Add New Documentation Record
                           </Button>
                         )}
                       </div>
@@ -5580,6 +6192,7 @@ const handleCreateRevisionEvent = async () => {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
+                                markAsSeen(`vdcr_${record.id}`);
                                 openDocumentPreview(record.documentUrl!, record.documentName, record.id);
                               }}
                               className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 hover:border-gray-400 rounded text-sm font-medium text-gray-700 hover:text-gray-900 transition-all duration-150 group w-full text-left shadow-sm hover:shadow"
@@ -5588,6 +6201,7 @@ const handleCreateRevisionEvent = async () => {
                               <span className="truncate flex-1">
                                 {record.documentName}
                               </span>
+                              <UnreadEntityDot entityKey={`vdcr_${record.id}`} updatedAt={record.updated_at} className="flex-shrink-0" />
                               <Eye size={12} className="text-gray-400 flex-shrink-0" />
                             </button>
                           ) : (
@@ -5596,6 +6210,7 @@ const handleCreateRevisionEvent = async () => {
                               <span className="text-sm font-medium text-gray-900 truncate">
                                 {record.documentName}
                               </span>
+                              <UnreadEntityDot entityKey={`vdcr_${record.id}`} updatedAt={record.updated_at} className="flex-shrink-0" />
                             </div>
                           )}
                         </div>
@@ -5611,7 +6226,7 @@ const handleCreateRevisionEvent = async () => {
                             record.codeStatus === 'Code 1' ? 'text-blue-600' :
                             record.codeStatus === 'Code 2' ? 'text-green-600' :
                             record.codeStatus === 'Code 3' ? 'text-yellow-600' :
-                            record.codeStatus === 'Code 4' ? 'text-purple-600' :
+                            record.codeStatus === 'Code 4' ? 'text-blue-600' :
                             'text-gray-600'
                           }`}>
                         {record.codeStatus}
@@ -5656,17 +6271,23 @@ const handleCreateRevisionEvent = async () => {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      const today = new Date().toISOString().split('T')[0];
+                                      const effectiveRevNum = getEffectiveRevNumForSubmitted(record.revision, record.revisionEvents);
+                                      const cycleTime = getCycleTimeForRevision(effectiveRevNum);
+                                      const autoReturn = cycleTime != null ? addDaysToDate(today, cycleTime) : '';
                                       setRevisionEventModal({
                                         isOpen: true,
                                         eventType: 'submitted',
-                                        eventDate: new Date().toISOString().split('T')[0],
-                                        estimatedReturnDate: '',
+                                        eventDate: today,
+                                        estimatedReturnDate: autoReturn,
                                         targetSubmissionDate: '',
                                         notes: '',
                                         documentFile: null,
                                         documentUrl: null,
                                         isUploadingDocument: false,
-                                        uploadAbortController: null
+                                        uploadAbortController: null,
+                                        hasNotableChange: false,
+                                        notableChangeTitle: ''
                                       });
                                       setEditingVDCR(record);
                                       setFormData({
@@ -5691,17 +6312,24 @@ const handleCreateRevisionEvent = async () => {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      const today = new Date().toISOString().split('T')[0];
+                                      const revMatch = record.revision.match(/Rev-?(\d+)/i) || record.revision.match(/(\d+)/);
+                                      const revNum = revMatch ? parseInt(revMatch[1], 10) : 0;
+                                      const cycleTime = getCycleTimeForRevision(revNum + 1);
+                                      const autoTarget = cycleTime != null ? addDaysToDate(today, cycleTime) : '';
                                       setRevisionEventModal({
                                         isOpen: true,
                                         eventType: 'received',
-                                        eventDate: new Date().toISOString().split('T')[0],
+                                        eventDate: today,
                                         estimatedReturnDate: '',
-                                        targetSubmissionDate: '',
+                                        targetSubmissionDate: autoTarget,
                                         notes: '',
                                         documentFile: null,
                                         documentUrl: null,
                                         isUploadingDocument: false,
-                                        uploadAbortController: null
+                                        uploadAbortController: null,
+                                        hasNotableChange: false,
+                                        notableChangeTitle: ''
                                       });
                                       setEditingVDCR(record);
                                       setFormData({
@@ -5749,6 +6377,7 @@ const handleCreateRevisionEvent = async () => {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  markAsSeen(`vdcr_${record.id}`);
                                   handleEditVDCR(record);
                                 }}
                                 className="p-1.5 hover:bg-gray-100 rounded transition-colors"
@@ -5976,7 +6605,7 @@ const handleCreateRevisionEvent = async () => {
             <span className="text-xs sm:text-sm text-gray-600">Code 3</span>
           </div>
           <div className="flex items-center gap-2 whitespace-nowrap flex-shrink-0">
-            <div className="w-3 h-3 bg-purple-500 rounded-sm flex-shrink-0"></div>
+            <div className="w-3 h-3 bg-blue-500 rounded-sm flex-shrink-0"></div>
             <span className="text-xs sm:text-sm text-gray-600">Code 4</span>
           </div>
         </div>
@@ -6004,22 +6633,24 @@ const handleCreateRevisionEvent = async () => {
       {/* Revision Event Modal */}
       <Dialog open={revisionEventModal.isOpen} onOpenChange={(open) => {
         if (!open) {
-          setRevisionEventModal({ 
-            isOpen: false, 
+          setRevisionEventModal({
+            isOpen: false,
             eventType: null,
-            eventDate: new Date().toISOString().split('T')[0], // Reset to today
+            eventDate: new Date().toISOString().split('T')[0],
             estimatedReturnDate: '',
             targetSubmissionDate: '',
             notes: '',
             documentFile: null,
             documentUrl: null,
             isUploadingDocument: false,
-            uploadAbortController: null
+            uploadAbortController: null,
+            hasNotableChange: false,
+            notableChangeTitle: ''
           });
         }
       }}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden p-4 sm:p-6">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>
               {revisionEventModal.eventType === 'submitted' ? 'Submitted' : 'Commented'}
             </DialogTitle>
@@ -6027,6 +6658,7 @@ const handleCreateRevisionEvent = async () => {
               Track this revision event to calculate turnaround times
             </DialogDescription>
           </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 -mx-1 px-1">
           <div className="space-y-4">
             <div>
               <Label>Revision Number</Label>
@@ -6042,7 +6674,21 @@ const handleCreateRevisionEvent = async () => {
                 id="eventDate"
                 type="date"
                 value={revisionEventModal.eventDate}
-                onChange={(e) => setRevisionEventModal(prev => ({ ...prev, eventDate: e.target.value }))}
+                onChange={(e) => {
+                  const newEventDate = e.target.value;
+                  const effectiveRevNum = revisionEventModal.eventType === 'submitted'
+                    ? getEffectiveRevNumForSubmitted(formData.revision, editingVDCR?.revisionEvents)
+                    : (() => { const m = formData.revision.match(/Rev-?(\d+)/i) || formData.revision.match(/(\d+)/); return m ? parseInt(m[1], 10) : 0; })() + 1; // For received: next submission = next rev
+                  const cycleTime = getCycleTimeForRevision(effectiveRevNum);
+                  const autoDate = cycleTime != null && newEventDate ? addDaysToDate(newEventDate, cycleTime) : '';
+                  setRevisionEventModal(prev => ({
+                    ...prev,
+                    eventDate: newEventDate,
+                    ...(revisionEventModal.eventType === 'submitted'
+                      ? { estimatedReturnDate: autoDate || prev.estimatedReturnDate }
+                      : { targetSubmissionDate: autoDate || prev.targetSubmissionDate })
+                  }));
+                }}
                 className="mt-1 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-100 [&::-webkit-calendar-picker-indicator]:invert-0 [&::-webkit-calendar-picker-indicator]:brightness-0"
                 style={{
                   colorScheme: 'light'
@@ -6059,7 +6705,7 @@ const handleCreateRevisionEvent = async () => {
             {/* Estimated Return Date - Only show for 'submitted' events */}
             {revisionEventModal.eventType === 'submitted' && (
               <div>
-                <Label htmlFor="estimatedReturnDate">Expected Return Date (Optional)</Label>
+                <Label htmlFor="estimatedReturnDate">Expected Return Date (auto from cycle time if set)</Label>
                 <Input
                   id="estimatedReturnDate"
                   type="date"
@@ -6080,7 +6726,7 @@ const handleCreateRevisionEvent = async () => {
             {/* Target Submission Date - Only show for 'received/commented' events */}
             {revisionEventModal.eventType === 'received' && (
               <div>
-                <Label htmlFor="targetSubmissionDate">Target Date for Next Submission (Optional)</Label>
+                <Label htmlFor="targetSubmissionDate">Target Date for Next Submission (auto from cycle time if set)</Label>
                 <Input
                   id="targetSubmissionDate"
                   type="date"
@@ -6308,21 +6954,55 @@ const handleCreateRevisionEvent = async () => {
                 placeholder="Add any notes about this event..."
               />
             </div>
+
+            {/* Notable change (e.g. change order, scope change) - grey box */}
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="hasNotableChange"
+                  checked={revisionEventModal.hasNotableChange}
+                  onCheckedChange={(checked) => setRevisionEventModal(prev => ({
+                    ...prev,
+                    hasNotableChange: !!checked,
+                    ...(checked ? {} : { notableChangeTitle: '' })
+                  }))}
+                  className="mt-0.5"
+                />
+                <Label htmlFor="hasNotableChange" className="text-sm font-normal text-gray-700 cursor-pointer leading-snug">
+                  Does this revision include something notable? (e.g. change order or other notable change in scope of work)
+                </Label>
+              </div>
+              {revisionEventModal.hasNotableChange && (
+                <div className="pl-6">
+                  <Label htmlFor="notableChangeTitle" className="text-sm text-gray-700">Title for this notable change (required)</Label>
+                  <Input
+                    id="notableChangeTitle"
+                    value={revisionEventModal.notableChangeTitle}
+                    onChange={(e) => setRevisionEventModal(prev => ({ ...prev, notableChangeTitle: e.target.value }))}
+                    className="mt-1 bg-white border-gray-300"
+                    placeholder="e.g. Change order #5, Scope increase"
+                  />
+                </div>
+              )}
+            </div>
           </div>
-          <DialogFooter>
+          </div>
+          <DialogFooter className="flex-shrink-0 border-t border-gray-200 pt-4 mt-4">
             <Button
               variant="outline"
-              onClick={() => setRevisionEventModal({ 
-                isOpen: false, 
+              onClick={() => setRevisionEventModal({
+                isOpen: false,
                 eventType: null,
-                eventDate: new Date().toISOString().split('T')[0], // Reset to today
+                eventDate: new Date().toISOString().split('T')[0],
                 estimatedReturnDate: '',
                 targetSubmissionDate: '',
                 notes: '',
                 documentFile: null,
                 documentUrl: null,
                 isUploadingDocument: false,
-                uploadAbortController: null
+                uploadAbortController: null,
+                hasNotableChange: false,
+                notableChangeTitle: ''
               })}
             >
               Cancel

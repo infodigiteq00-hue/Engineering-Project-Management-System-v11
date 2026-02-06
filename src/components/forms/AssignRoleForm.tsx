@@ -43,7 +43,7 @@ const AssignRoleForm: React.FC<AssignRoleFormProps> = ({
       case 'firm_admin':
         return [
           { value: 'project_manager', label: 'Project Manager' },
-          { value: 'vdcr_manager', label: 'VDCR Manager' }
+          { value: 'vdcr_manager', label: 'Documentation Manager' }
         ];
       case 'project_manager':
       case 'vdcr_manager':

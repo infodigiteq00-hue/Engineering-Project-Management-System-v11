@@ -2595,7 +2595,7 @@ const StandaloneEquipmentCard: React.FC<StandaloneEquipmentCardProps> = (props) 
                                       'CAD': 'bg-blue-100 text-blue-800',
                                       'Document': 'bg-green-100 text-green-800',
                                       'Spreadsheet': 'bg-yellow-100 text-yellow-800',
-                                      'Image': 'bg-purple-100 text-purple-800',
+                                      'Image': 'bg-blue-100 text-blue-800',
                                       'Other': 'bg-gray-100 text-gray-800'
                                     };
                                     return colors[category] || colors['Other'];
@@ -2713,7 +2713,7 @@ const StandaloneEquipmentCard: React.FC<StandaloneEquipmentCardProps> = (props) 
                           <Button
                             size="sm"
                             variant="outline"
-                            className="flex-1 bg-white hover:bg-purple-50 border-purple-200 hover:border-purple-300 text-purple-700 text-xs sm:text-sm"
+                            className="flex-1 bg-white hover:bg-blue-50 border-blue-200 hover:border-blue-300 text-blue-700 text-xs sm:text-sm"
                             onClick={() => {
                               if (onViewDetails) {
                                 onViewDetails();

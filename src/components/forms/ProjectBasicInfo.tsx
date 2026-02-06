@@ -272,9 +272,9 @@ const ProjectBasicInfo: React.FC<ProjectBasicInfoProps> = ({
             />
           </div>
 
-          {/* VDCR Manager */}
+          {/* Documentation Manager */}
           <div className="space-y-2">
-            <Label htmlFor="vdcrManager">VDCR Manager</Label>
+            <Label htmlFor="vdcrManager">Documentation Manager</Label>
             <Input
               id="vdcrManager"
               value={formData.vdcrManager}

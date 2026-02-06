@@ -654,7 +654,7 @@ const CompletionCertificatesTab = ({
                             equipmentTypes.push({ name: 'Heat Exchangers', count: equipmentBreakdown.heatExchanger, color: 'green' });
                           }
                           if (equipmentBreakdown.reactor && equipmentBreakdown.reactor > 0) {
-                            equipmentTypes.push({ name: 'Reactors', count: equipmentBreakdown.reactor, color: 'purple' });
+                            equipmentTypes.push({ name: 'Reactors', count: equipmentBreakdown.reactor, color: 'blue' });
                           }
                           if (equipmentBreakdown.storageTank && equipmentBreakdown.storageTank > 0) {
                             equipmentTypes.push({ name: 'Storage Tanks', count: equipmentBreakdown.storageTank, color: 'orange' });
@@ -688,7 +688,7 @@ const CompletionCertificatesTab = ({
                                 <span className={`text-xs font-bold ${
                                   equipment.color === 'blue' ? 'text-blue-800' :
                                   equipment.color === 'green' ? 'text-green-800' :
-                                  equipment.color === 'purple' ? 'text-purple-800' :
+                                  equipment.color === 'blue' ? 'text-blue-800' :
                                   equipment.color === 'orange' ? 'text-orange-800' :
                                   equipment.color === 'indigo' ? 'text-indigo-800' :
                                   equipment.color === 'pink' ? 'text-pink-800' :
@@ -715,11 +715,11 @@ const CompletionCertificatesTab = ({
                                     <div className="w-2 h-2 rounded-full bg-green-300"></div>
                                   </>
                                 )}
-                                {equipment.color === 'purple' && (
+                                {equipment.color === 'blue' && (
                                   <>
-                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div>
-                                    <div className="w-2 h-2 rounded-full bg-purple-400"></div>
-                                    <div className="w-2 h-2 rounded-full bg-purple-300"></div>
+                                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                    <div className="w-2 h-2 rounded-full bg-blue-400"></div>
+                                    <div className="w-2 h-2 rounded-full bg-blue-300"></div>
                                   </>
                                 )}
                                 {equipment.color === 'orange' && (
@@ -801,7 +801,7 @@ const CompletionCertificatesTab = ({
                             equipmentTypes.push({ name: 'Heat Exchangers', count: equipmentBreakdown.heatExchanger, color: 'green' });
                           }
                           if (equipmentBreakdown.reactor && equipmentBreakdown.reactor > 0) {
-                            equipmentTypes.push({ name: 'Reactors', count: equipmentBreakdown.reactor, color: 'purple' });
+                            equipmentTypes.push({ name: 'Reactors', count: equipmentBreakdown.reactor, color: 'blue' });
                           }
                           if (equipmentBreakdown.storageTank && equipmentBreakdown.storageTank > 0) {
                             equipmentTypes.push({ name: 'Storage Tanks', count: equipmentBreakdown.storageTank, color: 'orange' });
@@ -941,7 +941,7 @@ const CompletionCertificatesTab = ({
                             e.stopPropagation();
                             onSelectProject(project.id, "project-details");
                           }}
-                          className="w-full sm:flex-1 h-8 sm:h-8 px-2 sm:px-3 text-[11px] sm:text-sm whitespace-nowrap justify-center bg-white hover:bg-purple-50 border-gray-300 text-gray-700 hover:text-purple-700 hover:border-purple-300 font-medium transition-all duration-200"
+                          className="w-full sm:flex-1 h-8 sm:h-8 px-2 sm:px-3 text-[11px] sm:text-sm whitespace-nowrap justify-center bg-white hover:bg-blue-50 border-gray-300 text-gray-700 hover:text-blue-700 hover:border-blue-300 font-medium transition-all duration-200"
                         >
                           <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1.5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />

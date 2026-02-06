@@ -1817,6 +1817,25 @@ export const fastAPI = {
     }
   },
 
+  // Look up equipment manager email/phone by person_name from standalone_equipment_team_positions (for previously added team members)
+  async getStandaloneEquipmentManagerContact(personName: string): Promise<{ email: string; phone: string } | null> {
+    if (!personName || !personName.trim()) return null;
+    try {
+      const encoded = encodeURIComponent(personName.trim());
+      const response = await api.get(
+        `/standalone_equipment_team_positions?position_name=eq.Equipment Manager&person_name=ilike.${encoded}&select=email,phone&limit=1`
+      );
+      const rows = Array.isArray(response.data) ? response.data : (response.data ? [response.data] : []);
+      const row = rows[0];
+      if (row?.email && row.email.includes('@') && !String(row.email).toLowerCase().includes('@company')) {
+        return { email: row.email, phone: row.phone || '' };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
   // Create standalone equipment team position
   async createStandaloneTeamPosition(teamPositionData: any) {
     try {

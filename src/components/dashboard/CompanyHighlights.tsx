@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { fastAPI } from '@/lib/api';
 import { activityApi } from '@/lib/activityApi';
 import { useAuth } from '@/contexts/AuthContext';
+import { UnreadEntityDot } from '@/contexts/NotificationReadsContext';
 import axios from 'axios';
 import { Clock, User, FileText, CheckCircle, Send, Play, Pause, X, Eye, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -9,7 +10,8 @@ import { prefetchWithCache, CACHE_KEYS, hasCache, setCache, getCache } from '@/u
 // Company highlights caching - metadata-only caching enabled
 
 interface CompanyHighlightsProps {
-  onSelectProject?: (projectId: string, initialTab?: string) => void;
+  onSelectProject?: (projectId: string, initialTab?: string, options?: { fromUpdateCard?: boolean }) => void;
+  onMarkAsRead?: (entityKey: string) => void;
 }
 
 type TimePeriod = '1 Day' | '1 Week' | '1 Month' | 'Custom';
@@ -17,7 +19,7 @@ type ActiveTab = 'production' | 'documentation' | 'timeline' | 'milestone';
 type ProductionSubTab = 'key-progress' | 'all-updates';
 type TimelineSubTab = 'with-dates' | 'without-dates';
 
-const CompanyHighlights = ({ onSelectProject }: CompanyHighlightsProps) => {
+const CompanyHighlights = ({ onSelectProject, onMarkAsRead }: CompanyHighlightsProps) => {
   const { firmId: authFirmId, userRole: authUserRole, loading: authLoading } = useAuth();
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('1 Week');
   const [activeTab, setActiveTab] = useState<ActiveTab>('production');
@@ -1866,7 +1868,8 @@ const CompanyHighlights = ({ onSelectProject }: CompanyHighlightsProps) => {
                           key={entry.id}
                           onClick={() => {
                             if (entry.equipment?.project_id && onSelectProject) {
-                              onSelectProject(entry.equipment.project_id, 'equipment');
+                              onMarkAsRead?.(`equipment_log_${entry.id}`);
+                              onSelectProject(entry.equipment.project_id, 'equipment', { fromUpdateCard: true });
                             }
                           }}
                           className={`flex gap-2 sm:gap-3 md:gap-4 p-2.5 sm:p-3 md:p-4 bg-gray-50 rounded-md sm:rounded-lg border border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all ${
@@ -1901,14 +1904,20 @@ const CompanyHighlights = ({ onSelectProject }: CompanyHighlightsProps) => {
                           
                           {/* Content */}
                           <div className="flex-1 min-w-0">
-                            <div className="mb-0.5 sm:mb-1">
+                            <div className="mb-0.5 sm:mb-1 flex items-center gap-1.5">
                               <h3 className="text-xs xs:text-sm sm:text-base md:text-lg font-semibold text-gray-900 truncate">
                                 {entry.equipment?.tag_number || 'N/A'}
                               </h3>
-                              <p className="text-[10px] xs:text-xs sm:text-sm md:text-base text-gray-600 truncate">
-                                {entry.equipment?.type || entry.equipment?.name || 'Equipment'}
-                              </p>
+                              {entry.id && (
+                                <UnreadEntityDot
+                                  entityKey={`equipment_log_${entry.id}`}
+                                  updatedAt={entry.created_at || entry.updated_at}
+                                />
+                              )}
                             </div>
+                            <p className="text-[10px] xs:text-xs sm:text-sm md:text-base text-gray-600 truncate">
+                              {entry.equipment?.type || entry.equipment?.name || 'Equipment'}
+                            </p>
                             {/* Image Badge - Show if image exists */}
                             {(entry.image_url || entry.image) && (
                               <span className="inline-flex items-center px-1.5 xs:px-2 sm:px-2.5 py-0.5 text-[9px] xs:text-[10px] sm:text-xs font-semibold rounded-full border bg-blue-50 text-blue-700 border-blue-200 mb-1.5 sm:mb-2">
@@ -2000,7 +2009,8 @@ const CompanyHighlights = ({ onSelectProject }: CompanyHighlightsProps) => {
                           key={doc.id}
                           onClick={() => {
                             if (doc.vdcr_records?.project_id && onSelectProject) {
-                              onSelectProject(doc.vdcr_records.project_id, 'vdcr');
+                              onMarkAsRead?.(`vdcr_${doc.id}`);
+                              onSelectProject(doc.vdcr_records.project_id, 'vdcr', { fromUpdateCard: true });
                             }
                           }}
                           className={`flex items-start gap-2 sm:gap-3 md:gap-4 p-2.5 sm:p-3 md:p-4 bg-gray-50 rounded-md sm:rounded-lg border border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all ${
@@ -2016,9 +2026,17 @@ const CompanyHighlights = ({ onSelectProject }: CompanyHighlightsProps) => {
                           
                           {/* Content */}
                           <div className="flex-1 min-w-0">
-                            <h3 className="text-xs xs:text-sm sm:text-base md:text-lg font-semibold text-gray-900 mb-0.5 sm:mb-1 truncate">
-                              {doc.document_name || 'Document'}
-                            </h3>
+                            <div className="flex items-center gap-1.5 mb-0.5 sm:mb-1">
+                              <h3 className="text-xs xs:text-sm sm:text-base md:text-lg font-semibold text-gray-900 truncate">
+                                {doc.document_name || 'Document'}
+                              </h3>
+                              {doc.id && (
+                                <UnreadEntityDot
+                                  entityKey={`vdcr_${doc.id}`}
+                                  updatedAt={doc.updated_at || doc.created_at}
+                                />
+                              )}
+                            </div>
                             <div className="text-[10px] xs:text-xs sm:text-sm md:text-base text-gray-600 mb-1 sm:mb-2">
                               <span className="font-medium">Equipment:</span> <span className="break-words">{doc.equipment_ids || 'N/A'}</span>
                             </div>
